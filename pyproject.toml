@@ -1,0 +1,71 @@
+[build-system]
+requires = ["setuptools>=75.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "customer-finder"
+version = "0.1.0"
+description = "CLI that finds local cafes and bakeries likely without an owned website"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = { text = "MIT" }
+authors = [{ name = "Customer Finder" }]
+dependencies = [
+    "typer>=0.15.1,<0.17",
+    "pydantic>=2.10.0,<3",
+    "pydantic-settings>=2.7.0,<3",
+    "duckdb>=1.1.0,<2",
+    "httpx>=0.28.0,<0.29",
+    "PyYAML>=6.0.2,<7",
+    "rapidfuzz>=3.11.0,<4",
+    "tenacity>=9.0.0,<10",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0,<9",
+    "pytest-cov>=6.0.0,<7",
+    "respx>=0.21.0,<0.23",
+    "ruff>=0.9.0,<0.12",
+    "mypy>=1.14.0,<2",
+    "types-PyYAML>=6.0.12,<7",
+]
+
+[project.scripts]
+finder = "customer_finder.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+customer_finder = ["config/*.yml"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+packages = ["customer_finder"]
+mypy_path = "src"
+
+[[tool.mypy.overrides]]
+module = ["duckdb.*", "rapidfuzz.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "network: tests that require network access (deselect with '-m \"not network\"')",
+]
+addopts = "-m \"not network\""
+pythonpath = ["src"]
