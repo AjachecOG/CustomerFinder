@@ -15,12 +15,13 @@ non-negotiable architecture decisions without owner approval.
 | **2 — Geometry & Overture** | **Done (offline)** | bbox/haversine, STAC/DuckDB, fixture parquet. Live STAC `schema:version` is null — see PR |
 | **3 — Candidate quality** | **Done** | normalize, dedupe, chains, buckets, scoring |
 | **4 — Output & full CLI** | **Done** | pipeline, CSV/manifest/atomic write, Docker, `finder search` |
-| 5 — Calibration (Wrocław) | Next | Human-reviewed calibration gate |
+| **5 — Calibration (Wrocław)** | **Partial** | `finder calibration prepare/evaluate` ready; live Overture blocked by null STAC `schema:version`; human review still required |
 | 6 — Google enrichment | Pending | Only after calibration.approved.json |
 | 7 — Docs & v0.1.0 | Pending | |
 
-**Cloud agent start here:** Milestone 5 (human calibration) or continue docs polish.
-Install with `pip install -e ".[dev]"`, then run the quality gate from plan §19.4.
+**Blocked for live Wrocław calibration:** Overture STAC child catalogs currently
+publish `schema:version: null`. Offline fixture search works. After STAC is fixed
+(or owner approves a pin), run live search then fill calibration CSV manually.
 
 ## Quick start (local)
 

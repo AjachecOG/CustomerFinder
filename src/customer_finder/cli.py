@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from typing import Annotated
@@ -10,6 +11,7 @@ import typer
 from pydantic import ValidationError
 
 from customer_finder import __version__
+from customer_finder.calibration import evaluate_calibration, prepare_calibration
 from customer_finder.errors import (
     ArgumentError,
     ConfigError,
@@ -47,6 +49,14 @@ overture_app = typer.Typer(
     add_completion=False,
 )
 app.add_typer(overture_app, name="overture")
+
+calibration_app = typer.Typer(
+    name="calibration",
+    help="Prepare and evaluate manual calibration reviews.",
+    no_args_is_help=True,
+    add_completion=False,
+)
+app.add_typer(calibration_app, name="calibration")
 
 
 @app.command("version")
@@ -206,6 +216,38 @@ def search_cmd(
     typer.echo("counts: " + ", ".join(f"{key}={value}" for key, value in sorted(counts.items())))
     for warning in result.warnings:
         typer.secho(f"warning: {warning}", fg=typer.colors.YELLOW, err=True)
+
+
+@calibration_app.command("prepare")
+def calibration_prepare_cmd(
+    leads: Annotated[Path, typer.Option("--leads", exists=True, dir_okay=False)],
+    output: Annotated[Path, typer.Option("--output")],
+    limit: Annotated[int, typer.Option("--limit")] = 30,
+    overwrite: Annotated[bool, typer.Option("--overwrite")] = False,
+) -> None:
+    """Create an empty calibration CSV from top leads for human review."""
+    try:
+        path = prepare_calibration(leads, output, limit=limit, overwrite=overwrite)
+    except CustomerFinderError as exc:
+        typer.secho(exc.message, fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=exc.exit_code) from exc
+    typer.echo(f"Wrote {path} (limit={limit}). Fill the five review fields manually.")
+
+
+@calibration_app.command("evaluate")
+def calibration_evaluate_cmd(
+    file: Annotated[Path, typer.Option("--file", exists=True, dir_okay=False)],
+    output: Annotated[Path, typer.Option("--output")],
+) -> None:
+    """Evaluate a human-reviewed calibration CSV and optionally write approval."""
+    try:
+        summary = evaluate_calibration(file, output)
+    except CustomerFinderError as exc:
+        typer.secho(exc.message, fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=exc.exit_code) from exc
+    typer.echo(json.dumps({"passed": summary["passed"], "top20": summary["top20"]}, indent=2))
+    if summary.get("approved_path"):
+        typer.echo(f"approved={summary['approved_path']}")
 
 
 if __name__ == "__main__":
