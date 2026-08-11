@@ -5,13 +5,21 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from customer_finder.classify import classify_place, detect_chains
 from customer_finder.deduplicate import deduplicate
-from customer_finder.errors import ArgumentError, ConfigError, OutputError, OvertureError
+from customer_finder.errors import (
+    ArgumentError,
+    ConfigError,
+    GoogleEnrichmentError,
+    OutputError,
+    OvertureError,
+)
 from customer_finder.geometry import haversine_m
+from customer_finder.google_places import enrich_candidates
 from customer_finder.models import Candidate, CandidateBucket, SearchRequest
 from customer_finder.output import (
     build_manifest,
@@ -28,7 +36,7 @@ from customer_finder.overture import (
     resolve_release,
 )
 from customer_finder.scoring import score_candidate
-from customer_finder.settings import AppConfig, load_config, validate_category_aliases
+from customer_finder.settings import AppConfig, Settings, load_config, validate_category_aliases
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +73,8 @@ def run_search(
     *,
     parquet_path: str | None = None,
     config: AppConfig | None = None,
+    require_google_approval: bool = True,
+    google_approval_path: Path | None = None,
 ) -> PipelineResult:
     """Execute the full search pipeline. Network is skipped when parquet_path is set."""
     started_at = datetime.now(UTC)
@@ -174,9 +184,40 @@ def run_search(
             candidates = candidates[: request.top]
 
         if request.enrich == "google":
-            raise ConfigError(
-                "Google enrichment is not enabled until Milestone 6 / calibration approval"
+            enriched, google_stats, google_warnings = enrich_candidates(
+                candidates,
+                config=cfg,
+                settings=Settings(),
+                google_max_requests=request.google_max_requests,
+                strict=request.strict,
+                require_approval=require_google_approval,
+                approval_path=google_approval_path or Path("out/calibration.approved.json"),
             )
+            candidates = enriched
+            warnings.extend(google_warnings)
+            google = {
+                "enabled": True,
+                "request_budget": google_stats.request_budget,
+                "logical_candidates": google_stats.logical_candidates,
+                "http_attempts": google_stats.http_attempts,
+                "matched": google_stats.matched,
+                "ambiguous": google_stats.ambiguous,
+                "not_found": google_stats.not_found,
+                "errors": google_stats.errors,
+                "skipped_budget": google_stats.skipped_budget,
+            }
+        else:
+            google = {
+                "enabled": False,
+                "request_budget": request.google_max_requests,
+                "logical_candidates": 0,
+                "http_attempts": 0,
+                "matched": 0,
+                "ambiguous": 0,
+                "not_found": 0,
+                "errors": 0,
+                "skipped_budget": 0,
+            }
 
         finished_at = datetime.now(UTC)
         counts = {
@@ -190,17 +231,6 @@ def run_search(
             "likely_no_site": bucket_counts["likely_no_site"],
             "unknown": bucket_counts["unknown"],
             "output": len(candidates),
-        }
-        google = {
-            "enabled": False,
-            "request_budget": request.google_max_requests,
-            "logical_candidates": 0,
-            "http_attempts": 0,
-            "matched": 0,
-            "ambiguous": 0,
-            "not_found": 0,
-            "errors": 0,
-            "skipped_budget": 0,
         }
         if not candidates:
             warnings.append("empty result set")
@@ -229,7 +259,7 @@ def run_search(
             output_paths=paths,
             warnings=warnings,
         )
-    except (ArgumentError, ConfigError, OvertureError, OutputError) as exc:
+    except (ArgumentError, ConfigError, OvertureError, OutputError, GoogleEnrichmentError) as exc:
         finished_at = datetime.now(UTC)
         payload = build_manifest(
             run_id=run_id,

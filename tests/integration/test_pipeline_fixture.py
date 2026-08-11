@@ -6,6 +6,7 @@ import csv
 import json
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from customer_finder.cli import app
@@ -77,3 +78,25 @@ def test_cli_search_with_fixture(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     assert output.exists()
     assert "rows=" in result.stdout
+
+
+def test_pipeline_google_enrich_without_approval_fails(tmp_path: Path) -> None:
+    from customer_finder.errors import ConfigError
+
+    output = tmp_path / "leads.csv"
+    request = SearchRequest(
+        lat=51.1079,
+        lon=17.0385,
+        radius_km=3,
+        categories=["cafe"],
+        output_path=output,
+        enrich="google",
+        overture_release="fixture",
+    )
+    with pytest.raises(ConfigError):
+        run_search(
+            request,
+            parquet_path=str(local_fixture_path()),
+            require_google_approval=True,
+            google_approval_path=tmp_path / "missing.approved.json",
+        )

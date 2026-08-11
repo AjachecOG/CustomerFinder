@@ -239,3 +239,121 @@ def evaluate_calibration(
         summary["approved_path"] = str(approved)
 
     return summary
+
+
+GOOGLE_CALIBRATION_COLUMNS = (
+    "rank",
+    "overture_id",
+    "name",
+    "google_maps_url",
+    "google_place_id",
+    "same_entity",
+    "notes",
+)
+
+
+def prepare_google_calibration(
+    leads_csv: Path,
+    output_csv: Path,
+    *,
+    limit: int = 10,
+    overwrite: bool = False,
+) -> Path:
+    if output_csv.exists() and not overwrite:
+        raise OutputError(f"Google calibration file already exists: {output_csv}")
+    if not leads_csv.is_file():
+        raise ArgumentError(f"Leads CSV not found: {leads_csv}")
+
+    with leads_csv.open(encoding="utf-8-sig", newline="") as handle:
+        rows = [row for row in csv.DictReader(handle) if (row.get("google_place_id") or "").strip()]
+    selected = rows[:limit]
+    if len(selected) < limit:
+        raise ConfigError(f"Need at least {limit} rows with google_place_id, found {len(selected)}")
+
+    output_csv.parent.mkdir(parents=True, exist_ok=True)
+    with output_csv.open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(GOOGLE_CALIBRATION_COLUMNS))
+        writer.writeheader()
+        for rank, row in enumerate(selected, start=1):
+            candidate = _candidate_from_leads_row(row)
+            writer.writerow(
+                {
+                    "rank": str(rank),
+                    "overture_id": row["overture_id"],
+                    "name": row.get("name") or "",
+                    "google_maps_url": maps_search_url(candidate),
+                    "google_place_id": row.get("google_place_id") or "",
+                    "same_entity": "",
+                    "notes": "",
+                }
+            )
+    return output_csv
+
+
+def evaluate_google_calibration(
+    calibration_csv: Path,
+    summary_path: Path,
+    *,
+    expected_rows: int = 10,
+) -> dict[str, Any]:
+    if not calibration_csv.is_file():
+        raise ArgumentError(f"Google calibration CSV not found: {calibration_csv}")
+    with calibration_csv.open(encoding="utf-8-sig", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    if len(rows) != expected_rows:
+        raise ConfigError(f"Expected {expected_rows} rows, got {len(rows)}")
+    ids = [row["overture_id"] for row in rows]
+    if len(ids) != len(set(ids)):
+        raise ConfigError("Duplicate overture_id in google calibration CSV")
+
+    values = []
+    for row in rows:
+        value = (row.get("same_entity") or "").strip().lower()
+        if value not in {"yes", "no", "uncertain"}:
+            raise ConfigError(f"same_entity must be yes|no|uncertain (rank={row.get('rank')})")
+        values.append(value)
+
+    if any(v == "uncertain" for v in values):
+        # uncertain does not satisfy the gate
+        precision = 0.0
+        passed = False
+    else:
+        yes = sum(1 for v in values if v == "yes")
+        precision = yes / len(values)
+        passed = precision == 1.0
+
+    summary: dict[str, Any] = {
+        "file": str(calibration_csv),
+        "sha256": _sha256(calibration_csv),
+        "reviewed": len(values),
+        "entity_match_precision": precision,
+        "passed": passed,
+        "thresholds": {"entity_match_precision": 1.0, "required_rows": expected_rows},
+    }
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    summary_path.write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    if passed:
+        approved = summary_path.with_name("google-match-review.approved.json")
+        if summary_path.name.endswith(".summary.json"):
+            approved = summary_path.with_name(
+                summary_path.name.replace(".summary.json", ".approved.json")
+            )
+        approved.write_text(
+            json.dumps(
+                {
+                    "calibration_csv": str(calibration_csv),
+                    "summary_json": str(summary_path),
+                    "calibration_sha256": summary["sha256"],
+                    "summary_sha256": _sha256(summary_path),
+                    "passed": True,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        summary["approved_path"] = str(approved)
+    return summary

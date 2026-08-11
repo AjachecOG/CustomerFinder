@@ -1,0 +1,11 @@
+{
+  "places": [
+    {
+      "id": "places/ChIJmatch001",
+      "displayName": {"text": "Cicha Piekarnia"},
+      "formattedAddress": "ul. Cicha 5, 50-005 Wrocław, Poland",
+      "websiteUri": "https://example-bakery.pl",
+      "location": {"latitude": 51.10565, "longitude": 17.03593}
+    }
+  ]
+}

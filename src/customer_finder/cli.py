@@ -11,7 +11,12 @@ import typer
 from pydantic import ValidationError
 
 from customer_finder import __version__
-from customer_finder.calibration import evaluate_calibration, prepare_calibration
+from customer_finder.calibration import (
+    evaluate_calibration,
+    evaluate_google_calibration,
+    prepare_calibration,
+    prepare_google_calibration,
+)
 from customer_finder.errors import (
     ArgumentError,
     ConfigError,
@@ -57,6 +62,14 @@ calibration_app = typer.Typer(
     add_completion=False,
 )
 app.add_typer(calibration_app, name="calibration")
+
+google_calibration_app = typer.Typer(
+    name="google-calibration",
+    help="Prepare and evaluate Google match identity reviews.",
+    no_args_is_help=True,
+    add_completion=False,
+)
+app.add_typer(google_calibration_app, name="google-calibration")
 
 
 @app.command("version")
@@ -246,6 +259,46 @@ def calibration_evaluate_cmd(
         typer.secho(exc.message, fg=typer.colors.RED, err=True)
         raise typer.Exit(code=exc.exit_code) from exc
     typer.echo(json.dumps({"passed": summary["passed"], "top20": summary["top20"]}, indent=2))
+    if summary.get("approved_path"):
+        typer.echo(f"approved={summary['approved_path']}")
+
+
+@google_calibration_app.command("prepare")
+def google_calibration_prepare_cmd(
+    leads: Annotated[Path, typer.Option("--leads", exists=True, dir_okay=False)],
+    output: Annotated[Path, typer.Option("--output")],
+    limit: Annotated[int, typer.Option("--limit")] = 10,
+    overwrite: Annotated[bool, typer.Option("--overwrite")] = False,
+) -> None:
+    """Create Google match review CSV from leads with google_place_id."""
+    try:
+        path = prepare_google_calibration(leads, output, limit=limit, overwrite=overwrite)
+    except CustomerFinderError as exc:
+        typer.secho(exc.message, fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=exc.exit_code) from exc
+    typer.echo(f"Wrote {path}. Fill same_entity=yes|no|uncertain manually.")
+
+
+@google_calibration_app.command("evaluate")
+def google_calibration_evaluate_cmd(
+    file: Annotated[Path, typer.Option("--file", exists=True, dir_okay=False)],
+    output: Annotated[Path, typer.Option("--output")],
+) -> None:
+    """Evaluate Google match reviews; require 10/10 yes for approval."""
+    try:
+        summary = evaluate_google_calibration(file, output)
+    except CustomerFinderError as exc:
+        typer.secho(exc.message, fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=exc.exit_code) from exc
+    typer.echo(
+        json.dumps(
+            {
+                "passed": summary["passed"],
+                "entity_match_precision": summary["entity_match_precision"],
+            },
+            indent=2,
+        )
+    )
     if summary.get("approved_path"):
         typer.echo(f"approved={summary['approved_path']}")
 
