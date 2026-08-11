@@ -2,18 +2,27 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Annotated
 
 import typer
+from pydantic import ValidationError
 
 from customer_finder import __version__
-from customer_finder.errors import ConfigError, CustomerFinderError, ExitCode
+from customer_finder.errors import (
+    ArgumentError,
+    ConfigError,
+    CustomerFinderError,
+    ExitCode,
+)
+from customer_finder.models import SearchRequest
 from customer_finder.overture import (
     assert_schema_matches_snapshot,
     connect_duckdb,
     resolve_release,
 )
+from customer_finder.pipeline import run_search
 from customer_finder.settings import load_config
 
 app = typer.Typer(
@@ -102,7 +111,6 @@ def overture_schema_cmd(
             snapshot_schema_version=cfg.taxonomy_snapshot.schema_version,
         )
         assert_schema_matches_snapshot(resolved, cfg)
-        # Touch DuckDB so local env issues surface early.
         con = connect_duckdb()
         con.close()
     except CustomerFinderError as exc:
@@ -113,6 +121,91 @@ def overture_schema_cmd(
     typer.echo(f"schema_version={resolved.schema_version}")
     typer.echo(f"parquet={resolved.parquet_glob}")
     typer.echo(f"snapshot_schema_version={cfg.taxonomy_snapshot.schema_version}")
+
+
+@app.command("search")
+def search_cmd(
+    lat: Annotated[float, typer.Option("--lat", help="Center latitude (Poland MVP).")],
+    lon: Annotated[float, typer.Option("--lon", help="Center longitude (Poland MVP).")],
+    radius_km: Annotated[float, typer.Option("--radius-km", help="Search radius in km.")],
+    categories: Annotated[
+        str,
+        typer.Option("--categories", help="Comma-separated category aliases."),
+    ],
+    output: Annotated[Path, typer.Option("--output", help="Output CSV path.")],
+    enrich: Annotated[str, typer.Option("--enrich")] = "none",
+    min_score: Annotated[int, typer.Option("--min-score")] = 0,
+    top: Annotated[int | None, typer.Option("--top")] = None,
+    include_has_site: Annotated[bool, typer.Option("--include-has-site")] = False,
+    overture_release: Annotated[str, typer.Option("--overture-release")] = "latest",
+    google_max_requests: Annotated[int, typer.Option("--google-max-requests")] = 50,
+    strict: Annotated[bool, typer.Option("--strict")] = False,
+    config_dir: Annotated[Path | None, typer.Option("--config-dir")] = None,
+    overwrite: Annotated[bool, typer.Option("--overwrite")] = False,
+    verbose: Annotated[bool, typer.Option("--verbose")] = False,
+    parquet: Annotated[
+        Path | None,
+        typer.Option(
+            "--parquet",
+            help="Offline GeoParquet path (tests / fixtures). Skips STAC/S3.",
+            exists=True,
+            dir_okay=False,
+            resolve_path=True,
+        ),
+    ] = None,
+) -> None:
+    """Search Overture Places and write CSV + manifest + verify links."""
+    logging.basicConfig(
+        level=logging.DEBUG if verbose else logging.INFO,
+        format="%(levelname)s %(message)s",
+    )
+    try:
+        request = SearchRequest.model_validate(
+            {
+                "lat": lat,
+                "lon": lon,
+                "radius_km": radius_km,
+                "categories": categories,
+                "enrich": enrich,
+                "output_path": output,
+                "min_score": min_score,
+                "top": top,
+                "include_has_site": include_has_site,
+                "overture_release": overture_release,
+                "google_max_requests": google_max_requests,
+                "strict": strict,
+                "config_dir": config_dir,
+                "overwrite": overwrite,
+            }
+        )
+    except ValidationError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=ExitCode.BAD_ARGS) from exc
+    except Exception as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=ExitCode.BAD_ARGS) from exc
+
+    parquet_path = str(parquet) if parquet is not None else None
+    try:
+        result = run_search(request, parquet_path=parquet_path)
+    except ArgumentError as exc:
+        typer.secho(exc.message, fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=exc.exit_code) from exc
+    except CustomerFinderError as exc:
+        typer.secho(exc.message, fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=exc.exit_code) from exc
+    except Exception as exc:
+        typer.secho(f"Unexpected error: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=ExitCode.UNEXPECTED) from exc
+
+    counts = result.manifest["counts"]
+    typer.echo(
+        f"Wrote {result.output_paths.csv_path} "
+        f"(rows={counts.get('output', 0)}, release={result.manifest['overture_release']})"
+    )
+    typer.echo("counts: " + ", ".join(f"{key}={value}" for key, value in sorted(counts.items())))
+    for warning in result.warnings:
+        typer.secho(f"warning: {warning}", fg=typer.colors.YELLOW, err=True)
 
 
 if __name__ == "__main__":
