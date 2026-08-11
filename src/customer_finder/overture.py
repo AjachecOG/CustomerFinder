@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urljoin
 
 import duckdb
@@ -24,6 +24,17 @@ SCHEMA_VERSION_RE = re.compile(r"^v?(\d+\.\d+\.\d+)$")
 
 USER_AGENT = f"customer-finder/{__version__}"
 HTTP_TIMEOUT_S = 30.0
+
+# Evidence (2026-08-11): STAC child catalogs publish schema:version=null /
+# schema:tag=.../vNone for 2026-07-22.0 and 2026-06-17.0. GitHub schema tag
+# v1.18.0 was published 2026-07-21 (day before the July Places release).
+# Minimal contract amendment to plan §9.1: fall back to taxonomy_snapshot
+# schema_version with an explicit warning when STAC omits the field.
+STAC_SCHEMA_FALLBACK_WARNING = (
+    "stac_schema_version_missing: STAC child catalog schema:version is null; "
+    "using taxonomy_snapshot.schema_version as temporary fallback "
+    "(checked 2026-08-11 against https://stac.overturemaps.org/)"
+)
 
 REQUIRED_COLUMNS: tuple[str, ...] = (
     "id",
@@ -51,6 +62,8 @@ class ResolvedRelease:
     schema_version: str
     parquet_glob: str
     catalog_url: str
+    schema_source: Literal["stac", "taxonomy_snapshot_fallback"] = "stac"
+    warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,9 +132,20 @@ def _child_href(catalog: dict[str, Any], release_id: str, *, catalog_url: str) -
     )
 
 
-def _extract_schema_version(child_catalog: dict[str, Any], *, url: str) -> str:
+def _extract_schema_version(
+    child_catalog: dict[str, Any],
+    *,
+    url: str,
+    snapshot_schema_version: str | None,
+) -> tuple[str, Literal["stac", "taxonomy_snapshot_fallback"], tuple[str, ...]]:
     raw = child_catalog.get("schema:version")
     if raw is None or raw == "":
+        if snapshot_schema_version:
+            return (
+                _normalize_schema_version(snapshot_schema_version),
+                "taxonomy_snapshot_fallback",
+                (STAC_SCHEMA_FALLBACK_WARNING + f" url={url}",),
+            )
         raise OvertureError(
             f"STAC child catalog missing schema:version (url={url}). "
             "Cannot compare against taxonomy_snapshot; update STAC handling "
@@ -131,7 +155,7 @@ def _extract_schema_version(child_catalog: dict[str, Any], *, url: str) -> str:
         raise OvertureError(
             f"STAC schema:version must be a string, got {type(raw).__name__} (url={url})"
         )
-    return _normalize_schema_version(raw)
+    return _normalize_schema_version(raw), "stac", ()
 
 
 def _parquet_glob(release_id: str) -> str:
@@ -148,7 +172,9 @@ def resolve_release(
 
     When STAC is unavailable and the user passed an explicit release id, the
     release is accepted without STAC and ``snapshot_schema_version`` is used so
-    the pipeline can continue (plan §9.1). ``latest`` always requires STAC.
+    the pipeline can continue (plan §9.1). ``latest`` always requires STAC for
+    the release id, but may fall back to the taxonomy snapshot when STAC omits
+    ``schema:version`` (temporary amendment while Overture publishes null).
     """
     owns_client = client is None
     http = client or _http_client()
@@ -172,6 +198,11 @@ def resolve_release(
                 schema_version=_normalize_schema_version(snapshot_schema_version),
                 parquet_glob=_parquet_glob(release),
                 catalog_url=STAC_CATALOG_URL,
+                schema_source="taxonomy_snapshot_fallback",
+                warnings=(
+                    "stac_unavailable: using explicit release with taxonomy_snapshot "
+                    f"schema_version={snapshot_schema_version}",
+                ),
             )
 
         if release == "latest":
@@ -186,12 +217,16 @@ def resolve_release(
 
         child_url = _child_href(catalog, release_id, catalog_url=STAC_CATALOG_URL)
         child = _get_json_with_backoff(http, child_url)
-        schema_version = _extract_schema_version(child, url=child_url)
+        schema_version, schema_source, warnings = _extract_schema_version(
+            child, url=child_url, snapshot_schema_version=snapshot_schema_version
+        )
         return ResolvedRelease(
             release_id=release_id,
             schema_version=schema_version,
             parquet_glob=_parquet_glob(release_id),
             catalog_url=child_url,
+            schema_source=schema_source,
+            warnings=warnings,
         )
     finally:
         if owns_client:

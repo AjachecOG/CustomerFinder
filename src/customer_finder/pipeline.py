@@ -84,6 +84,7 @@ def run_search(
                 snapshot_schema_version=cfg.taxonomy_snapshot.schema_version,
             )
             assert_schema_matches_snapshot(resolved, cfg)
+            warnings.extend(resolved.warnings)
             source_path = resolved.parquet_glob
             release_id = resolved.release_id
         else:

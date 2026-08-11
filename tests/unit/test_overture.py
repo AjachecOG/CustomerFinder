@@ -51,7 +51,30 @@ def test_resolve_latest_release_reads_schema_version() -> None:
 
 
 @respx.mock
-def test_resolve_latest_rejects_missing_schema_version() -> None:
+def test_resolve_latest_falls_back_when_schema_version_null() -> None:
+    respx.get(STAC_CATALOG_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "latest": "2026-07-22.0",
+                "links": [{"rel": "child", "href": "./2026-07-22.0/catalog.json", "latest": True}],
+            },
+        )
+    )
+    respx.get("https://stac.overturemaps.org/2026-07-22.0/catalog.json").mock(
+        return_value=httpx.Response(
+            200,
+            json={"id": "2026-07-22.0", "schema:version": None},
+        )
+    )
+    resolved = resolve_release("latest", snapshot_schema_version="1.18.0")
+    assert resolved.schema_version == "1.18.0"
+    assert resolved.schema_source == "taxonomy_snapshot_fallback"
+    assert any("stac_schema_version_missing" in w for w in resolved.warnings)
+
+
+@respx.mock
+def test_resolve_latest_rejects_missing_schema_without_snapshot() -> None:
     respx.get(STAC_CATALOG_URL).mock(
         return_value=httpx.Response(
             200,
