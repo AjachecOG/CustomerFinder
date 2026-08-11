@@ -9,6 +9,11 @@ import typer
 
 from customer_finder import __version__
 from customer_finder.errors import ConfigError, CustomerFinderError, ExitCode
+from customer_finder.overture import (
+    assert_schema_matches_snapshot,
+    connect_duckdb,
+    resolve_release,
+)
 from customer_finder.settings import load_config
 
 app = typer.Typer(
@@ -25,6 +30,14 @@ config_app = typer.Typer(
     add_completion=False,
 )
 app.add_typer(config_app, name="config")
+
+overture_app = typer.Typer(
+    name="overture",
+    help="Overture Maps diagnostics.",
+    no_args_is_help=True,
+    add_completion=False,
+)
+app.add_typer(overture_app, name="overture")
 
 
 @app.command("version")
@@ -61,6 +74,45 @@ def config_validate_cmd(
     typer.echo(f"OK: configuration valid ({source})")
     typer.echo(f"schema_version={cfg.taxonomy_snapshot.schema_version}")
     typer.echo(f"categories={','.join(cfg.category_aliases())}")
+
+
+@overture_app.command("schema")
+def overture_schema_cmd(
+    release: Annotated[
+        str,
+        typer.Option("--release", help="Overture release id or 'latest'."),
+    ] = "latest",
+    config_dir: Annotated[
+        Path | None,
+        typer.Option(
+            "--config-dir",
+            help="Optional complete YAML override directory.",
+            exists=False,
+            file_okay=False,
+            dir_okay=True,
+            resolve_path=True,
+        ),
+    ] = None,
+) -> None:
+    """Resolve a release via STAC and compare schema:version to the taxonomy snapshot."""
+    try:
+        cfg = load_config(config_dir)
+        resolved = resolve_release(
+            release,
+            snapshot_schema_version=cfg.taxonomy_snapshot.schema_version,
+        )
+        assert_schema_matches_snapshot(resolved, cfg)
+        # Touch DuckDB so local env issues surface early.
+        con = connect_duckdb()
+        con.close()
+    except CustomerFinderError as exc:
+        typer.secho(exc.message, fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=exc.exit_code) from exc
+
+    typer.echo(f"OK: release={resolved.release_id}")
+    typer.echo(f"schema_version={resolved.schema_version}")
+    typer.echo(f"parquet={resolved.parquet_glob}")
+    typer.echo(f"snapshot_schema_version={cfg.taxonomy_snapshot.schema_version}")
 
 
 if __name__ == "__main__":

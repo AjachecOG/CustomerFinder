@@ -12,14 +12,14 @@ non-negotiable architecture decisions without owner approval.
 |-----------|--------|-------|
 | **0 — Skeleton** | **Done** | Package layout, Typer CLI `version`, pyproject, gitignore, tests scaffold |
 | **1 — Models & config** | **Done** | Pydantic models, YAML configs (schema 1.18.0), `finder config validate` |
-| 2 — Geometry & Overture | Next | bbox/haversine, STAC, DuckDB, fixture parquet |
-| 3 — Candidate quality | Pending | normalize, dedupe, chains, buckets, scoring |
+| **2 — Geometry & Overture** | **Done (offline)** | bbox/haversine, STAC client, DuckDB query, fixture parquet. Live STAC `schema:version` is currently null — see PR notes |
+| 3 — Candidate quality | Next | normalize, dedupe, chains, buckets, scoring |
 | 4 — Output & full CLI | Pending | pipeline, CSV/manifest/atomic write, README |
 | 5 — Calibration (Wrocław) | Pending | Human-reviewed calibration gate |
 | 6 — Google enrichment | Pending | Only after calibration.approved.json |
 | 7 — Docs & v0.1.0 | Pending | |
 
-**Cloud agent start here:** Milestone 2. Install with `pip install -e ".[dev]"`,
+**Cloud agent start here:** Milestone 3. Install with `pip install -e ".[dev]"`,
 then run the quality gate from plan §19.4 before marking any milestone complete.
 
 ## Quick start (local / cloud)
