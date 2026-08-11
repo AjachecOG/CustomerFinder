@@ -15,13 +15,38 @@ non-negotiable architecture decisions without owner approval.
 | **2 — Geometry & Overture** | **Done (offline)** | bbox/haversine, STAC/DuckDB, fixture parquet. Live STAC `schema:version` is null — see PR |
 | **3 — Candidate quality** | **Done** | normalize, dedupe, chains, buckets, scoring |
 | **4 — Output & full CLI** | **Done** | pipeline, CSV/manifest/atomic write, Docker, `finder search` |
-| **5 — Calibration (Wrocław)** | **Partial** | `finder calibration prepare/evaluate` ready; live Overture blocked by null STAC `schema:version`; human review still required |
-| 6 — Google enrichment | Pending | Only after calibration.approved.json |
+| **5 — Calibration (Wrocław)** | **Awaiting human review** | Live 3 km search OK (~5.5s, release 2026-07-22.0). `out/calibration.csv` prepared (30 rows). Fill reviews, then `finder calibration evaluate`. |
+| 6 — Google enrichment | Pending | Only after `out/calibration.approved.json` |
 | 7 — Docs & v0.1.0 | Pending | |
 
-**Blocked for live Wrocław calibration:** Overture STAC child catalogs currently
-publish `schema:version: null`. Offline fixture search works. After STAC is fixed
-(or owner approves a pin), run live search then fill calibration CSV manually.
+### Live run (2026-08-11)
+
+```text
+release=2026-07-22.0  duration≈5.5s
+raw_category_bbox=432  inside_radius=419  output=196
+buckets in CSV: social_only=185, unknown=7, likely_no_site=4
+(has_owned_site=220 excluded by default)
+```
+
+STAC still omits `schema:version`; resolver falls back to taxonomy snapshot `1.18.0` with a manifest warning.
+
+### Human calibration steps
+
+```powershell
+# already generated after live search:
+#   out/leads_wroclaw.csv
+#   out/calibration.csv  (30 empty review rows)
+
+# 1) Open each google_maps_url in out/calibration.csv
+# 2) Fill entity_status, target_category, operating_status_review,
+#    independence, site_status (all five required per row)
+# 3) Evaluate:
+finder calibration evaluate `
+  --file out/calibration.csv `
+  --output out/calibration.summary.json
+```
+
+Gates: top20 `target_precision >= 0.80` and `no_site_precision >= 0.70`, all prepared rows complete.
 
 ## Quick start (local)
 

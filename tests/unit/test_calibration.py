@@ -67,3 +67,16 @@ def test_prepare_and_evaluate_pass(tmp_path: Path) -> None:
     result = evaluate_calibration(calib, summary)
     assert result["passed"] is True
     assert Path(result["approved_path"]).exists()
+
+
+def test_evaluate_fixture_reviewed_file() -> None:
+    from pathlib import Path
+
+    fixture = Path(__file__).resolve().parents[1] / "fixtures" / "calibration_reviewed.csv"
+    summary = Path("/tmp/calibration_fixture.summary.json")
+    result = evaluate_calibration(fixture, summary, expected_rows=25)
+    assert result["complete_rows"] == 25
+    assert float(result["top20"]["target_precision"]) >= 0.80
+    assert float(result["top20"]["no_site_precision"]) >= 0.70
+    # Row 21-22 are chain/wrong so full-file pass thresholds may still pass top20.
+    assert "sha256" in result

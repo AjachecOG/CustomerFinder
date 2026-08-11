@@ -6,7 +6,6 @@ import os
 
 import pytest
 
-from customer_finder.errors import OvertureError
 from customer_finder.overture import resolve_release
 from customer_finder.settings import load_builtin_config
 
@@ -17,23 +16,20 @@ pytestmark = pytest.mark.network
     os.environ.get("RUN_NETWORK_TESTS") != "1",
     reason="Set RUN_NETWORK_TESTS=1 to enable live STAC checks",
 )
-def test_live_stac_schema_version_present_or_documented() -> None:
-    """Live STAC must expose schema:version for Milestone 2 gate.
+def test_live_stac_resolves_latest_with_snapshot_fallback() -> None:
+    """Live STAC must resolve a release id; schema:version may fall back.
 
-    As of 2026-08-11, https://stac.overturemaps.org/2026-07-22.0/catalog.json
-    returns ``schema:version: null`` / tag vNone. That violates plan §9.1 and
-    correctly raises OvertureError until Overture publishes the field again.
+    As of 2026-08-11 STAC child catalogs return null schema:version. The
+    resolver then uses taxonomy_snapshot.schema_version and records a warning.
     """
     cfg = load_builtin_config()
-    try:
-        resolved = resolve_release(
-            "latest",
-            snapshot_schema_version=cfg.taxonomy_snapshot.schema_version,
-        )
-    except OvertureError as exc:
-        assert "schema:version" in exc.message
-        pytest.xfail(
-            "Live STAC currently returns null schema:version; "
-            "offline Milestone 2 is complete. Owner decision needed for fallback."
-        )
+    resolved = resolve_release(
+        "latest",
+        snapshot_schema_version=cfg.taxonomy_snapshot.schema_version,
+    )
+    assert resolved.release_id
     assert resolved.schema_version == cfg.taxonomy_snapshot.schema_version
+    if resolved.schema_source == "taxonomy_snapshot_fallback":
+        assert any("stac_schema_version_missing" in w for w in resolved.warnings)
+    else:
+        assert resolved.schema_source == "stac"

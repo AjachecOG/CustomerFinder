@@ -1,0 +1,26 @@
+rank,overture_id,name,google_maps_url,entity_status,target_category,operating_status_review,independence,site_status,notes
+1,fixture-1,Cafe Testowa,https://www.google.com/maps/search/?api=1&query=Cafe+Testowa,valid,yes,open,independent,no_owned_site,fixture row
+2,fixture-2,Piekarnia Test,https://www.google.com/maps/search/?api=1&query=Piekarnia+Test,valid,yes,open,independent,social_only,fixture row
+3,fixture-3,Cukiernia Test,https://www.google.com/maps/search/?api=1&query=Cukiernia+Test,valid,yes,open,independent,no_owned_site,fixture row
+4,fixture-4,Lody Test,https://www.google.com/maps/search/?api=1&query=Lody+Test,valid,yes,open,independent,no_owned_site,fixture row
+5,fixture-5,Cafe A,https://www.google.com/maps/search/?api=1&query=Cafe+A,valid,yes,open,independent,no_owned_site,
+6,fixture-6,Cafe B,https://www.google.com/maps/search/?api=1&query=Cafe+B,valid,yes,open,independent,social_only,
+7,fixture-7,Cafe C,https://www.google.com/maps/search/?api=1&query=Cafe+C,valid,yes,open,independent,no_owned_site,
+8,fixture-8,Cafe D,https://www.google.com/maps/search/?api=1&query=Cafe+D,valid,yes,open,independent,no_owned_site,
+9,fixture-9,Cafe E,https://www.google.com/maps/search/?api=1&query=Cafe+E,valid,yes,open,independent,no_owned_site,
+10,fixture-10,Cafe F,https://www.google.com/maps/search/?api=1&query=Cafe+F,valid,yes,open,independent,social_only,
+11,fixture-11,Cafe G,https://www.google.com/maps/search/?api=1&query=Cafe+G,valid,yes,open,independent,no_owned_site,
+12,fixture-12,Cafe H,https://www.google.com/maps/search/?api=1&query=Cafe+H,valid,yes,open,independent,no_owned_site,
+13,fixture-13,Cafe I,https://www.google.com/maps/search/?api=1&query=Cafe+I,valid,yes,open,independent,no_owned_site,
+14,fixture-14,Cafe J,https://www.google.com/maps/search/?api=1&query=Cafe+J,valid,yes,open,independent,no_owned_site,
+15,fixture-15,Cafe K,https://www.google.com/maps/search/?api=1&query=Cafe+K,valid,yes,open,independent,social_only,
+16,fixture-16,Cafe L,https://www.google.com/maps/search/?api=1&query=Cafe+L,valid,yes,open,independent,no_owned_site,
+17,fixture-17,Cafe M,https://www.google.com/maps/search/?api=1&query=Cafe+M,valid,yes,open,independent,no_owned_site,
+18,fixture-18,Cafe N,https://www.google.com/maps/search/?api=1&query=Cafe+N,valid,yes,open,independent,no_owned_site,
+19,fixture-19,Cafe O,https://www.google.com/maps/search/?api=1&query=Cafe+O,valid,yes,open,independent,no_owned_site,
+20,fixture-20,Cafe P,https://www.google.com/maps/search/?api=1&query=Cafe+P,valid,yes,open,independent,social_only,
+21,fixture-21,Chain X,https://www.google.com/maps/search/?api=1&query=Chain+X,valid,yes,open,chain,owned_site,denylist example
+22,fixture-22,Wrong Place,https://www.google.com/maps/search/?api=1&query=Wrong,wrong_entity,no,closed,uncertain,uncertain,not a cafe
+23,fixture-23,Cafe Q,https://www.google.com/maps/search/?api=1&query=Cafe+Q,valid,yes,open,independent,no_owned_site,
+24,fixture-24,Cafe R,https://www.google.com/maps/search/?api=1&query=Cafe+R,valid,yes,open,independent,no_owned_site,
+25,fixture-25,Cafe S,https://www.google.com/maps/search/?api=1&query=Cafe+S,valid,yes,open,independent,social_only,
