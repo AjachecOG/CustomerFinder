@@ -1,0 +1,21 @@
+# Host classification for websites / socials from Overture.
+# Hosts must be lowercase, without www. prefix or trailing dots.
+social_hosts:
+  - facebook.com
+  - instagram.com
+  - tiktok.com
+  - x.com
+  - twitter.com
+  - linkedin.com
+aggregator_hosts:
+  - pyszne.pl
+  - glovoapp.com
+  - ubereats.com
+  - tripadvisor.com
+  - linktr.ee
+  - google.com
+  - golemio.pl
+  - restopolitan.com
+  - yelp.com
+ignored_hosts:
+  - localhost

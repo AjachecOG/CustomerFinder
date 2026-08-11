@@ -1,0 +1,39 @@
+# Category aliases for Customer Finder MVP.
+# Codes validated against Overture Places taxonomy (schema 1.18.0 / July 2026 release).
+# basic_category values are only those confirmed as basic-level labels in the
+# official hierarchy CSV; finer types live under overture_taxonomy.
+version: 1
+validated_against_schema: "1.18.0"
+categories:
+  cafe:
+    display_name: Kawiarnia
+    overture_basic: [cafe, coffee_shop]
+    overture_taxonomy: [cafe, coffee_shop, tea_room, coffee_roastery]
+    score_weight: 20
+  bakery:
+    display_name: Piekarnia
+    # bakery is a taxonomy primary; its basic_category in data is casual_eatery
+    # (too broad to filter on alone).
+    overture_basic: []
+    overture_taxonomy: [bakery]
+    score_weight: 18
+  pastry:
+    display_name: Cukiernia
+    overture_basic: []
+    overture_taxonomy:
+      - patisserie_cake_shop
+      - cupcake_shop
+      - custom_cakes_shop
+      - donut_shop
+      - pie_shop
+      - macaron_shop
+      - chocolatier
+    score_weight: 25
+  ice_cream:
+    display_name: Lodziarnia
+    overture_basic: []
+    overture_taxonomy:
+      - ice_cream_shop
+      - gelato_shop
+      - frozen_yogurt_shop
+    score_weight: 18

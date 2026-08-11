@@ -1,4 +1,4 @@
-"""CLI smoke tests for Milestone 0."""
+"""CLI smoke tests."""
 
 from __future__ import annotations
 
@@ -20,3 +20,9 @@ def test_cli_help_exits_zero() -> None:
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
     assert "finder" in result.stdout.lower()
+
+
+def test_config_help_lists_validate() -> None:
+    result = runner.invoke(app, ["config", "--help"])
+    assert result.exit_code == 0
+    assert "validate" in result.stdout.lower()

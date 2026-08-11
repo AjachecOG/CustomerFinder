@@ -1,0 +1,28 @@
+# Codes actually used by categories.yml, reviewed against official docs.
+# Not a full copy of the global taxonomy.
+schema_version: "1.18.0"
+reviewed_at: "2026-08-11"
+evidence_urls:
+  - "https://docs.overturemaps.org/guides/places/taxonomy/"
+  - "https://docs.overturemaps.org/guides/places/taxonomy-browser/"
+  - "https://github.com/OvertureMaps/docs/blob/main/docs/guides/places/csv/2026-03-04-categories-hierarchies.csv"
+  - "https://github.com/OvertureMaps/schema/releases/tag/v1.18.0"
+approved_basic:
+  - cafe
+  - coffee_shop
+approved_taxonomy:
+  - cafe
+  - coffee_shop
+  - tea_room
+  - coffee_roastery
+  - bakery
+  - patisserie_cake_shop
+  - cupcake_shop
+  - custom_cakes_shop
+  - donut_shop
+  - pie_shop
+  - macaron_shop
+  - chocolatier
+  - ice_cream_shop
+  - gelato_shop
+  - frozen_yogurt_shop
