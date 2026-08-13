@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import duckdb
 import httpx
@@ -19,6 +20,7 @@ from customer_finder.models import RawOverturePlace, SourceRef
 from customer_finder.settings import AppConfig
 
 STAC_CATALOG_URL = "https://stac.overturemaps.org/catalog.json"
+STAC_ALLOWED_HOSTS = frozenset({"stac.overturemaps.org"})
 RELEASE_ID_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\.\d+$")
 SCHEMA_VERSION_RE = re.compile(r"^v?(\d+\.\d+\.\d+)$")
 
@@ -80,11 +82,23 @@ def _normalize_schema_version(raw: str) -> str:
     return match.group(1)
 
 
+def _assert_stac_url(url: str) -> None:
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme != "https" or host not in STAC_ALLOWED_HOSTS:
+        raise OvertureError(f"Refusing STAC URL host={host!r}")
+
+
+def _stac_request_hook(request: httpx.Request) -> None:
+    _assert_stac_url(str(request.url))
+
+
 def _http_client() -> httpx.Client:
     return httpx.Client(
         timeout=HTTP_TIMEOUT_S,
         headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
         follow_redirects=True,
+        event_hooks={"request": [_stac_request_hook]},
     )
 
 
@@ -94,6 +108,7 @@ def _get_json_with_backoff(client: httpx.Client, url: str) -> dict[str, Any]:
 
     delays = (0.0, 1.0, 2.0)
     last_exc: Exception | None = None
+    _assert_stac_url(url)
     for attempt, delay in enumerate(delays, start=1):
         if delay:
             time.sleep(delay)
@@ -243,10 +258,8 @@ def assert_schema_matches_snapshot(resolved: ResolvedRelease, config: AppConfig)
         )
 
 
-def connect_duckdb(*, memory_limit: str | None = None) -> duckdb.DuckDBPyConnection:
+def connect_duckdb() -> duckdb.DuckDBPyConnection:
     con = duckdb.connect(database=":memory:")
-    if memory_limit:
-        con.execute(f"SET memory_limit='{memory_limit}'")
     _ensure_extensions(con)
     return con
 
@@ -481,7 +494,8 @@ def map_overture_row(row: dict[str, Any]) -> RawOverturePlace:
     addresses = _as_list(row.get("addresses"))
     chosen = None
     for addr in addresses:
-        if _struct_get(addr, "country") == "PL":
+        country_raw = _struct_get(addr, "country")
+        if str(country_raw or "").upper() == "PL":
             chosen = addr
             break
     if chosen is None and addresses:
@@ -499,7 +513,7 @@ def map_overture_row(row: dict[str, Any]) -> RawOverturePlace:
         pc = _struct_get(chosen, "postcode")
         postcode = str(pc) if pc is not None else None
         cc = _struct_get(chosen, "country")
-        country = str(cc) if cc is not None else None
+        country = str(cc).upper() if cc is not None else None
 
     source_refs: list[SourceRef] = []
     for src in _as_list(row.get("sources")):
@@ -531,13 +545,24 @@ def map_overture_row(row: dict[str, Any]) -> RawOverturePlace:
     lon = row.get("lon")
     if lat is None or lon is None:
         raise OvertureError(f"Row {row.get('id')!r} missing ST_X/ST_Y coordinates")
+    try:
+        lat_f = float(lat)
+        lon_f = float(lon)
+    except (TypeError, ValueError) as exc:
+        raise OvertureError(f"Row {row.get('id')!r} has non-numeric coordinates") from exc
+    if not math.isfinite(lat_f) or not math.isfinite(lon_f):
+        raise OvertureError(f"Row {row.get('id')!r} has non-finite coordinates")
+    if not -90.0 <= lat_f <= 90.0 or not -180.0 <= lon_f <= 180.0:
+        raise OvertureError(
+            f"Row {row.get('id')!r} has out-of-range coordinates lat={lat_f} lon={lon_f}"
+        )
 
     return RawOverturePlace(
         overture_id=str(row["id"]),
         version=int(row["version"]),
         name=name,
-        lat=float(lat),
-        lon=float(lon),
+        lat=lat_f,
+        lon=lon_f,
         basic_category=(
             str(row["basic_category"]) if row.get("basic_category") is not None else None
         ),

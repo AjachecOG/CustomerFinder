@@ -44,7 +44,7 @@ def normalize_phone(raw: str, *, country: str | None) -> tuple[str, bool]:
         if len(body) < 8:
             return original, False
         return f"+{body}", True
-    if country == "PL" and len(body) == 9:
+    if (country or "").upper() == "PL" and len(body) == 9:
         return f"+48{body}", True
     # Other national formats without + are ambiguous.
     return original, False
@@ -138,9 +138,9 @@ def classify_urls(urls: list[str], config: AppConfig) -> ClassifiedUrls:
         else:
             other.add(normalized)
             if raw.strip() and raw.strip()[0] in "=+-@":
-                warnings.append(f"rejected_formula_like_url:{raw[:32]}")
+                warnings.append("rejected_formula_like_url")
             elif "://" not in raw and "." not in raw:
-                warnings.append(f"invalid_url:{raw[:32]}")
+                warnings.append("invalid_url")
     return ClassifiedUrls(
         owned_domains=sorted(owned),
         social_urls=sorted(social),

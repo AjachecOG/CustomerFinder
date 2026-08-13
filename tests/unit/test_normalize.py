@@ -12,6 +12,7 @@ def test_normalize_name_keeps_polish_and_strips_punct() -> None:
 
 def test_normalize_phone_poland_national() -> None:
     assert normalize_phone("71 100-00-01", country="PL") == ("+48711000001", True)
+    assert normalize_phone("71 100-00-01", country="pl") == ("+48711000001", True)
     assert normalize_phone("+48 711 000 001", country="PL") == ("+48711000001", True)
     phone, usable = normalize_phone("123", country="PL")
     assert phone == "123"

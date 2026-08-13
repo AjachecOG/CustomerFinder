@@ -61,3 +61,14 @@ def test_overture_schema_command_with_mocked_stac() -> None:
     assert result.exit_code == ExitCode.SUCCESS
     assert "2026-07-22.0" in result.stdout
     assert "1.18.0" in result.stdout
+
+
+def test_verbose_logging_does_not_enable_httpx_debug() -> None:
+    import logging
+
+    from customer_finder.cli import configure_logging
+
+    configure_logging(verbose=True)
+    assert logging.getLogger("httpx").level >= logging.WARNING
+    assert logging.getLogger("httpcore").level >= logging.WARNING
+    assert logging.getLogger("customer_finder").level == logging.DEBUG

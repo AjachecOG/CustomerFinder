@@ -73,7 +73,10 @@ def test_match_not_found_on_empty() -> None:
 def test_require_calibration_approval(tmp_path: Path) -> None:
     csv_path = tmp_path / "calibration.csv"
     csv_path.write_text("rank,overture_id\n1,a\n", encoding="utf-8")
+    summary_path = tmp_path / "calibration.summary.json"
+    summary_path.write_text('{"passed": true}\n', encoding="utf-8")
     digest = __import__("hashlib").sha256(csv_path.read_bytes()).hexdigest()
+    summary_digest = __import__("hashlib").sha256(summary_path.read_bytes()).hexdigest()
     approved = tmp_path / "calibration.approved.json"
     approved.write_text(
         json.dumps(
@@ -81,6 +84,8 @@ def test_require_calibration_approval(tmp_path: Path) -> None:
                 "passed": True,
                 "calibration_csv": str(csv_path),
                 "calibration_sha256": digest,
+                "summary_json": str(summary_path),
+                "summary_sha256": summary_digest,
             }
         ),
         encoding="utf-8",
@@ -88,6 +93,9 @@ def test_require_calibration_approval(tmp_path: Path) -> None:
     require_calibration_approval(approved)
     with pytest.raises(ConfigError):
         require_calibration_approval(tmp_path / "missing.json")
+    summary_path.write_text('{"passed": true, "tampered": true}\n', encoding="utf-8")
+    with pytest.raises(ConfigError, match="summary"):
+        require_calibration_approval(approved)
 
 
 @respx.mock
@@ -109,6 +117,8 @@ def test_enrich_candidates_budget_and_match(tmp_path: Path) -> None:
     assert stats.http_attempts == 1
     assert stats.matched + stats.skipped_budget == 2
     assert any(c.google_place_id for c in updated) or stats.matched == 1
+    assert updated[0].google_place_id == "ChIJmatch001"
+    assert updated[1].google_place_id is None
 
 
 @respx.mock
@@ -182,3 +192,45 @@ def test_website_kind_social_and_none() -> None:
     assert website_kind_from_uri(None, cfg) == "none"
     assert website_kind_from_uri("https://instagram.com/x", cfg) == "social"
     assert website_kind_from_uri("https://pyszne.pl/x", cfg) == "aggregator"
+
+
+@respx.mock
+def test_enrich_does_not_follow_redirects_with_api_key() -> None:
+    cfg = load_builtin_config()
+    evil = respx.post("https://evil.example/steal").mock(
+        return_value=httpx.Response(200, json={"places": []})
+    )
+    respx.post(TEXT_SEARCH_URL).mock(
+        return_value=httpx.Response(302, headers={"location": "https://evil.example/steal"})
+    )
+    _updated, stats, _warnings = enrich_candidates(
+        [_candidate()],
+        config=cfg,
+        settings=Settings(google_maps_api_key="super-secret-key"),
+        require_approval=False,
+    )
+    assert evil.call_count == 0
+    assert stats.errors == 1 or stats.http_attempts >= 1
+
+
+@respx.mock
+def test_enrich_does_not_http_for_candidates_beyond_budget() -> None:
+    cfg = load_builtin_config()
+    route = respx.post(TEXT_SEARCH_URL).mock(return_value=httpx.Response(200, json={"places": []}))
+    high = _candidate()
+    mid = _candidate().model_copy(
+        update={"raw": high.raw.model_copy(update={"overture_id": "mid"}), "score": 50}
+    )
+    low = _candidate().model_copy(
+        update={"raw": high.raw.model_copy(update={"overture_id": "low"}), "score": 10}
+    )
+    _updated, stats, _warnings = enrich_candidates(
+        [low, high, mid],
+        config=cfg,
+        settings=Settings(google_maps_api_key="test-key"),
+        google_max_requests=1,
+        require_approval=False,
+    )
+    assert route.call_count == 1
+    assert stats.skipped_budget == 2
+    assert stats.logical_candidates == 3

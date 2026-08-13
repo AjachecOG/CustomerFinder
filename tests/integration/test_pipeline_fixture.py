@@ -100,3 +100,33 @@ def test_pipeline_google_enrich_without_approval_fails(tmp_path: Path) -> None:
             require_google_approval=True,
             google_approval_path=tmp_path / "missing.approved.json",
         )
+
+
+def test_unexpected_pipeline_error_exposes_run_id_not_exception_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from customer_finder.errors import CustomerFinderError
+
+    output = tmp_path / "leads.csv"
+    request = SearchRequest(
+        lat=51.1079,
+        lon=17.0385,
+        radius_km=3,
+        categories=["cafe"],
+        output_path=output,
+        enrich="none",
+        overture_release="fixture",
+    )
+
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("GOOGLE_MAPS_API_KEY=secret-should-not-leak")
+
+    monkeypatch.setattr("customer_finder.pipeline.fetch_places", boom)
+    with pytest.raises(CustomerFinderError) as exc:
+        run_search(request, parquet_path=str(local_fixture_path()))
+    assert "run_id=" in exc.value.message
+    assert "secret-should-not-leak" not in exc.value.message
+    failed = json.loads(output.with_name("leads.failed.manifest.json").read_text(encoding="utf-8"))
+    assert "secret-should-not-leak" not in json.dumps(failed)
+    assert failed["error"]["type"] == "RuntimeError"
+    assert failed["error"]["run_id"]

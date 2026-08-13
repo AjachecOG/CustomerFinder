@@ -43,6 +43,23 @@ def _write_leads(path: Path, n: int = 25) -> None:
             )
 
 
+def test_prepare_protects_formula_like_names(tmp_path: Path) -> None:
+    leads = tmp_path / "leads.csv"
+    calib = tmp_path / "calibration.csv"
+    _write_leads(leads, 1)
+    with leads.open(encoding="utf-8-sig", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    rows[0]["name"] = "=cmd|'/c calc'!A0"
+    with leads.open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+    prepare_calibration(leads, calib, limit=1)
+    with calib.open(encoding="utf-8-sig", newline="") as handle:
+        out = list(csv.DictReader(handle))
+    assert out[0]["name"].startswith("'=")
+
+
 def test_prepare_and_evaluate_pass(tmp_path: Path) -> None:
     leads = tmp_path / "leads.csv"
     calib = tmp_path / "calibration.csv"
