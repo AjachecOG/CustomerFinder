@@ -14,6 +14,7 @@ from customer_finder.deduplicate import deduplicate
 from customer_finder.errors import (
     ArgumentError,
     ConfigError,
+    CustomerFinderError,
     GoogleEnrichmentError,
     OutputError,
     OvertureError,
@@ -289,9 +290,10 @@ def run_search(
             google={"enabled": False},
             warnings=warnings,
         )
-        payload["error"] = {"type": type(exc).__name__, "message": str(exc), "run_id": run_id}
+        # Do not persist str(exc): unexpected errors (e.g. httpx) can include headers/secrets.
+        payload["error"] = {"type": type(exc).__name__, "run_id": run_id}
         try:
             write_failed_manifest(failed_path, payload)
         except OSError:
             logger.exception("failed to write failed manifest")
-        raise
+        raise CustomerFinderError(f"Unexpected error (run_id={run_id})") from exc

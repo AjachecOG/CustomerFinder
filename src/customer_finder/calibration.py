@@ -10,6 +10,7 @@ from typing import Any
 
 from customer_finder.errors import ArgumentError, ConfigError, OutputError
 from customer_finder.models import CalibrationReview, Candidate, CandidateBucket, RawOverturePlace
+from customer_finder.output import protect_formula
 from customer_finder.verify_links import maps_search_url
 
 REVIEW_FIELDS = (
@@ -85,8 +86,8 @@ def prepare_calibration(
             writer.writerow(
                 {
                     "rank": str(rank),
-                    "overture_id": row["overture_id"],
-                    "name": row.get("name") or "",
+                    "overture_id": protect_formula(row["overture_id"]),
+                    "name": protect_formula(row.get("name") or ""),
                     "google_maps_url": maps_search_url(candidate),
                     "entity_status": "",
                     "target_category": "",
@@ -279,10 +280,10 @@ def prepare_google_calibration(
             writer.writerow(
                 {
                     "rank": str(rank),
-                    "overture_id": row["overture_id"],
-                    "name": row.get("name") or "",
+                    "overture_id": protect_formula(row["overture_id"]),
+                    "name": protect_formula(row.get("name") or ""),
                     "google_maps_url": maps_search_url(candidate),
-                    "google_place_id": row.get("google_place_id") or "",
+                    "google_place_id": protect_formula(row.get("google_place_id") or ""),
                     "same_entity": "",
                     "notes": "",
                 }

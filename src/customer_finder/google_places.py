@@ -27,6 +27,7 @@ from customer_finder.settings import AppConfig, Settings
 logger = logging.getLogger(__name__)
 
 TEXT_SEARCH_URL = "https://places.googleapis.com/v1/places:searchText"
+GOOGLE_ALLOWED_HOST = "places.googleapis.com"
 FIELD_MASK = (
     "places.id,places.displayName,places.formattedAddress,places.websiteUri,places.location"
 )
@@ -71,6 +72,10 @@ class _Budget:
             return True
 
 
+def _sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def require_calibration_approval(path: Path = DEFAULT_APPROVAL_PATH) -> dict[str, Any]:
     """Enforce Milestone 6 entry gate: valid calibration.approved.json."""
     if not path.is_file():
@@ -91,10 +96,21 @@ def require_calibration_approval(path: Path = DEFAULT_APPROVAL_PATH) -> dict[str
     expected_hash = payload.get("calibration_sha256")
     if not csv_path.is_file() or not expected_hash:
         raise ConfigError(f"Calibration approval missing calibration_csv/sha256 fields: {path}")
-    digest = hashlib.sha256(csv_path.read_bytes()).hexdigest()
-    if digest != expected_hash:
+    if _sha256_file(csv_path) != expected_hash:
         raise ConfigError(
             "calibration.approved.json hash does not match current calibration CSV; "
+            "re-run calibration evaluate after reviewing the file."
+        )
+    summary_raw = payload.get("summary_json")
+    expected_summary = payload.get("summary_sha256")
+    if not summary_raw or not expected_summary:
+        raise ConfigError(f"Calibration approval missing summary_json/sha256 fields: {path}")
+    summary_path = Path(str(summary_raw))
+    if not summary_path.is_file():
+        raise ConfigError(f"Calibration approval summary file missing: {summary_path}")
+    if _sha256_file(summary_path) != expected_summary:
+        raise ConfigError(
+            "calibration.approved.json hash does not match current summary JSON; "
             "re-run calibration evaluate after reviewing the file."
         )
     return payload
@@ -235,6 +251,13 @@ def _backoff_sleep(attempt: int) -> None:
     time.sleep(base + random.uniform(0, 0.25))
 
 
+def _google_request_hook(request: httpx.Request) -> None:
+    """Refuse to send the API key anywhere except Places API (New)."""
+    host = (request.url.host or "").lower()
+    if request.url.scheme != "https" or host != GOOGLE_ALLOWED_HOST:
+        raise ConfigError(f"Refusing Google Places URL host={host!r}")
+
+
 def _post_text_search(
     client: httpx.Client,
     *,
@@ -243,6 +266,7 @@ def _post_text_search(
     lat: float,
     lon: float,
     budget: _Budget,
+    stop: threading.Event,
 ) -> tuple[dict[str, Any] | None, str | None, int]:
     """Return (payload, fatal_error, attempts_used)."""
     body = {
@@ -265,6 +289,8 @@ def _post_text_search(
     attempts = 0
     last_error: str | None = None
     for attempt in range(1, MAX_ATTEMPTS + 1):
+        if stop.is_set():
+            return None, "stopped", attempts
         if not budget.try_acquire():
             return None, "skipped_budget", attempts
         attempts += 1
@@ -272,28 +298,29 @@ def _post_text_search(
             response = client.post(TEXT_SEARCH_URL, headers=headers, json=body)
         except httpx.TimeoutException:
             last_error = "timeout"
-            if attempt < MAX_ATTEMPTS:
+            if attempt < MAX_ATTEMPTS and not stop.is_set():
                 _backoff_sleep(attempt)
                 continue
             return None, last_error, attempts
         except httpx.TransportError as exc:
             last_error = f"transport:{exc.__class__.__name__}"
-            if attempt < MAX_ATTEMPTS:
+            if attempt < MAX_ATTEMPTS and not stop.is_set():
                 _backoff_sleep(attempt)
                 continue
             return None, last_error, attempts
 
         if response.status_code in {401, 403, 400}:
+            stop.set()
             raise ConfigError(
                 f"Google Places API rejected request with HTTP {response.status_code}"
             )
         if response.status_code == 429 or response.status_code >= 500:
             last_error = f"http_{response.status_code}"
-            if attempt < MAX_ATTEMPTS:
+            if attempt < MAX_ATTEMPTS and not stop.is_set():
                 _backoff_sleep(attempt)
                 continue
             return None, last_error, attempts
-        if response.status_code >= 400:
+        if response.status_code != 200:
             last_error = f"http_{response.status_code}"
             return None, last_error, attempts
         data = response.json()
@@ -341,6 +368,7 @@ def enrich_candidates(
     )
 
     budget = _Budget(limit=google_max_requests)
+    stop = threading.Event()
     results: dict[int, GoogleMatchResult] = {}
     fatal_partial = False
 
@@ -348,7 +376,8 @@ def enrich_candidates(
     http = client or httpx.Client(
         timeout=httpx.Timeout(READ_TIMEOUT_S, connect=CONNECT_TIMEOUT_S),
         headers={"User-Agent": f"customer-finder/{__version__}"},
-        follow_redirects=True,
+        follow_redirects=False,
+        event_hooks={"request": [_google_request_hook]},
     )
 
     def work(index: int, candidate: Candidate) -> tuple[int, GoogleMatchResult, int]:
@@ -365,8 +394,9 @@ def enrich_candidates(
             lat=candidate.raw.lat,
             lon=candidate.raw.lon,
             budget=budget,
+            stop=stop,
         )
-        if err == "skipped_budget":
+        if err in {"skipped_budget", "stopped"}:
             return (
                 index,
                 GoogleMatchResult(
@@ -404,6 +434,9 @@ def enrich_candidates(
                 try:
                     index, result, attempts = future.result()
                 except ConfigError:
+                    stop.set()
+                    for pending in futures:
+                        pending.cancel()
                     raise
                 except Exception as exc:
                     fatal_partial = True

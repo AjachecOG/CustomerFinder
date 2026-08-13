@@ -44,7 +44,7 @@ def normalize_phone(raw: str, *, country: str | None) -> tuple[str, bool]:
         if len(body) < 8:
             return original, False
         return f"+{body}", True
-    if country == "PL" and len(body) == 9:
+    if (country or "").upper() == "PL" and len(body) == 9:
         return f"+48{body}", True
     # Other national formats without + are ambiguous.
     return original, False

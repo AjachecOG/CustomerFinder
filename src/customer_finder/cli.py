@@ -146,6 +146,14 @@ def overture_schema_cmd(
     typer.echo(f"snapshot_schema_version={cfg.taxonomy_snapshot.schema_version}")
 
 
+def configure_logging(*, verbose: bool) -> None:
+    """Log to stderr. Never enable httpx/httpcore DEBUG (headers can include API keys)."""
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    logging.getLogger("customer_finder").setLevel(logging.DEBUG if verbose else logging.INFO)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+
 @app.command("search")
 def search_cmd(
     lat: Annotated[float, typer.Option("--lat", help="Center latitude (Poland MVP).")],
@@ -178,10 +186,7 @@ def search_cmd(
     ] = None,
 ) -> None:
     """Search Overture Places and write CSV + manifest + verify links."""
-    logging.basicConfig(
-        level=logging.DEBUG if verbose else logging.INFO,
-        format="%(levelname)s %(message)s",
-    )
+    configure_logging(verbose=verbose)
     try:
         request = SearchRequest.model_validate(
             {
@@ -217,9 +222,13 @@ def search_cmd(
     except CustomerFinderError as exc:
         typer.secho(exc.message, fg=typer.colors.RED, err=True)
         raise typer.Exit(code=exc.exit_code) from exc
-    except Exception as exc:
-        typer.secho(f"Unexpected error: {exc}", fg=typer.colors.RED, err=True)
-        raise typer.Exit(code=ExitCode.UNEXPECTED) from exc
+    except Exception:
+        typer.secho(
+            "Unexpected error (run_id unknown; see failed manifest if present)",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=ExitCode.UNEXPECTED) from None
 
     counts = result.manifest["counts"]
     typer.echo(

@@ -200,3 +200,72 @@ def test_map_overture_row_json_roundtrip_stable() -> None:
     )
     assert place.name is None
     assert json.loads(place.model_dump_json())["taxonomy_alternates"] == []
+
+
+@respx.mock
+def test_resolve_rejects_off_host_stac_child() -> None:
+    respx.get(STAC_CATALOG_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "latest": "2026-07-22.0",
+                "links": [
+                    {
+                        "rel": "child",
+                        "href": "https://evil.example/catalog.json",
+                        "title": "2026-07-22.0",
+                    }
+                ],
+            },
+        )
+    )
+    with pytest.raises(OvertureError, match="Refusing STAC URL"):
+        resolve_release("latest")
+
+
+def test_map_overture_row_rejects_invalid_coordinates() -> None:
+    row = {
+        "id": "bad",
+        "version": 1,
+        "names": {"primary": "X"},
+        "basic_category": "cafe",
+        "taxonomy": {},
+        "confidence": None,
+        "operating_status": "open",
+        "websites": [],
+        "socials": [],
+        "emails": [],
+        "phones": [],
+        "brand": None,
+        "addresses": [],
+        "sources": [],
+        "lat": 100.0,
+        "lon": 17.0,
+    }
+    with pytest.raises(OvertureError, match="out-of-range"):
+        map_overture_row(row)
+
+
+def test_map_overture_row_accepts_lowercase_pl_country() -> None:
+    place = map_overture_row(
+        {
+            "id": "pl1",
+            "version": 1,
+            "names": {"primary": "X"},
+            "basic_category": "cafe",
+            "taxonomy": {},
+            "confidence": None,
+            "operating_status": "open",
+            "websites": [],
+            "socials": [],
+            "emails": [],
+            "phones": [],
+            "brand": None,
+            "addresses": [{"freeform": "ul. 1", "locality": "Wrocław", "country": "pl"}],
+            "sources": [],
+            "lat": 51.1,
+            "lon": 17.0,
+        }
+    )
+    assert place.country == "PL"
+    assert place.address_freeform == "ul. 1"

@@ -104,3 +104,46 @@ def test_atomic_write_creates_complete_marker(tmp_path: Path) -> None:
         "leads.manifest.json",
         "leads.verify_links.txt",
     }
+
+
+def test_atomic_write_rollback_when_complete_rename_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+
+    csv_path = tmp_path / "leads.csv"
+    paths = derive_output_paths(csv_path)
+    csv_path.write_text("old-csv", encoding="utf-8")
+    paths.manifest_path.write_text("old-manifest", encoding="utf-8")
+    paths.verify_links_path.write_text("old-links", encoding="utf-8")
+    paths.complete_path.write_text("old-complete", encoding="utf-8")
+
+    real_replace = os.replace
+
+    def flaky_replace(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
+        if str(dst).endswith(".complete") and ".tmp-" in str(src):
+            raise OSError("simulated promote failure")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", flaky_replace)
+    place = RawOverturePlace(overture_id="a", version=1, name="A", lat=51.1, lon=17.0)
+    candidate = Candidate(
+        raw=place,
+        distance_m=1,
+        normalized_name="a",
+        category_alias="cafe",
+        bucket=CandidateBucket.LIKELY_NO_SITE,
+        score=40,
+        score_reasons=["base:+10"],
+    )
+    with pytest.raises(OutputError, match="promote"):
+        write_success_bundle(
+            paths,
+            candidates=[candidate],
+            overture_release="fixture",
+            manifest={"run_id": "22222222-2222-2222-2222-222222222222"},
+            overwrite=True,
+        )
+    assert csv_path.read_text(encoding="utf-8") == "old-csv"
+    assert paths.manifest_path.read_text(encoding="utf-8") == "old-manifest"
+    assert paths.complete_path.read_text(encoding="utf-8") == "old-complete"
