@@ -117,6 +117,8 @@ def test_enrich_candidates_budget_and_match(tmp_path: Path) -> None:
     assert stats.http_attempts == 1
     assert stats.matched + stats.skipped_budget == 2
     assert any(c.google_place_id for c in updated) or stats.matched == 1
+    assert updated[0].google_place_id == "ChIJmatch001"
+    assert updated[1].google_place_id is None
 
 
 @respx.mock
@@ -209,3 +211,26 @@ def test_enrich_does_not_follow_redirects_with_api_key() -> None:
     )
     assert evil.call_count == 0
     assert stats.errors == 1 or stats.http_attempts >= 1
+
+
+@respx.mock
+def test_enrich_does_not_http_for_candidates_beyond_budget() -> None:
+    cfg = load_builtin_config()
+    route = respx.post(TEXT_SEARCH_URL).mock(return_value=httpx.Response(200, json={"places": []}))
+    high = _candidate()
+    mid = _candidate().model_copy(
+        update={"raw": high.raw.model_copy(update={"overture_id": "mid"}), "score": 50}
+    )
+    low = _candidate().model_copy(
+        update={"raw": high.raw.model_copy(update={"overture_id": "low"}), "score": 10}
+    )
+    _updated, stats, _warnings = enrich_candidates(
+        [low, high, mid],
+        config=cfg,
+        settings=Settings(google_maps_api_key="test-key"),
+        google_max_requests=1,
+        require_approval=False,
+    )
+    assert route.call_count == 1
+    assert stats.skipped_budget == 2
+    assert stats.logical_candidates == 3

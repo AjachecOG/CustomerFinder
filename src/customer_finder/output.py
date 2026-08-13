@@ -84,6 +84,33 @@ def failed_manifest_path(csv_path: Path) -> Path:
     return csv_path.with_name(f"{csv_path.stem}.failed.manifest.json")
 
 
+def stale_output_warning(csv_path: Path, *, now: datetime | None = None) -> str | None:
+    """Warn when reading a result past data_fresh_until; never delete files (plan §15.3)."""
+    manifest_path = derive_output_paths(csv_path).manifest_path
+    if not manifest_path.is_file():
+        return None
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    raw = payload.get("data_fresh_until")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        fresh_until = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if fresh_until.tzinfo is None:
+        fresh_until = fresh_until.replace(tzinfo=UTC)
+    moment = now or datetime.now(UTC)
+    if moment <= fresh_until:
+        return None
+    return (
+        f"data_fresh_until {raw} has passed for {csv_path}; "
+        "re-run search on a current Overture release (files were not deleted)"
+    )
+
+
 def protect_formula(value: str) -> str:
     stripped = value.lstrip()
     if stripped[:1] in {"=", "+", "-", "@"}:

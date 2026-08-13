@@ -366,11 +366,24 @@ def enrich_candidates(
         enumerate(candidates),
         key=lambda item: (-item[1].score, item[1].distance_m, item[1].raw.overture_id),
     )
+    to_fetch = ordered[:google_max_requests]
+    skipped_ahead = ordered[google_max_requests:]
 
     budget = _Budget(limit=google_max_requests)
     stop = threading.Event()
     results: dict[int, GoogleMatchResult] = {}
     fatal_partial = False
+    for index, _candidate in skipped_ahead:
+        results[index] = GoogleMatchResult(
+            status="skipped_budget",
+            place_id=None,
+            website_kind="none",
+            name_similarity=None,
+            address_similarity=None,
+            match_distance_m=None,
+            warning="skipped_budget",
+        )
+        stats.skipped_budget += 1
 
     owns_client = client is None
     http = client or httpx.Client(
@@ -429,7 +442,7 @@ def enrich_candidates(
 
     try:
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-            futures = [pool.submit(work, idx, cand) for idx, cand in ordered]
+            futures = [pool.submit(work, idx, cand) for idx, cand in to_fetch]
             for future in as_completed(futures):
                 try:
                     index, result, attempts = future.result()

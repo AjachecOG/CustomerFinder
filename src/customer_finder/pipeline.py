@@ -28,6 +28,7 @@ from customer_finder.output import (
     failed_manifest_path,
     preflight_output,
     sort_candidates,
+    stale_output_warning,
     write_failed_manifest,
     write_success_bundle,
 )
@@ -88,6 +89,10 @@ def run_search(
         cfg = config or load_config(request.config_dir)
         validate_category_aliases(request.categories, cfg)
         preflight_output(paths, overwrite=request.overwrite)
+        if request.overwrite:
+            stale = stale_output_warning(request.output_path)
+            if stale:
+                warnings.append(stale)
 
         if parquet_path is None:
             resolved = resolve_release(

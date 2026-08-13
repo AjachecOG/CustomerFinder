@@ -15,6 +15,7 @@ from customer_finder.output import (
     derive_output_paths,
     preflight_output,
     protect_formula,
+    stale_output_warning,
     write_success_bundle,
 )
 
@@ -109,6 +110,19 @@ def test_atomic_write_creates_complete_marker(tmp_path: Path) -> None:
 def test_atomic_write_rollback_when_complete_rename_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _assert_rollback_on_promote_failure(tmp_path, monkeypatch, ".complete")
+
+
+@pytest.mark.parametrize("suffix", [".csv", ".manifest.json", ".verify_links.txt"])
+def test_atomic_write_rollback_after_each_rename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, suffix: str
+) -> None:
+    _assert_rollback_on_promote_failure(tmp_path, monkeypatch, suffix)
+
+
+def _assert_rollback_on_promote_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, suffix: str
+) -> None:
     import os
 
     csv_path = tmp_path / "leads.csv"
@@ -121,7 +135,7 @@ def test_atomic_write_rollback_when_complete_rename_fails(
     real_replace = os.replace
 
     def flaky_replace(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
-        if str(dst).endswith(".complete") and ".tmp-" in str(src):
+        if str(dst).endswith(suffix) and ".tmp-" in str(src):
             raise OSError("simulated promote failure")
         real_replace(src, dst)
 
@@ -147,3 +161,20 @@ def test_atomic_write_rollback_when_complete_rename_fails(
     assert csv_path.read_text(encoding="utf-8") == "old-csv"
     assert paths.manifest_path.read_text(encoding="utf-8") == "old-manifest"
     assert paths.complete_path.read_text(encoding="utf-8") == "old-complete"
+
+
+def test_stale_output_warning_when_fresh_until_passed(tmp_path: Path) -> None:
+    from datetime import UTC, datetime
+
+    csv_path = tmp_path / "leads.csv"
+    csv_path.write_text("x", encoding="utf-8")
+    manifest = tmp_path / "leads.manifest.json"
+    manifest.write_text(
+        '{"data_fresh_until": "2020-01-01T00:00:00Z"}\n',
+        encoding="utf-8",
+    )
+    warning = stale_output_warning(csv_path, now=datetime(2026, 8, 13, tzinfo=UTC))
+    assert warning is not None
+    assert "data_fresh_until" in warning
+    assert "not deleted" in warning
+    assert stale_output_warning(csv_path, now=datetime(2019, 1, 1, tzinfo=UTC)) is None

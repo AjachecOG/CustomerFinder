@@ -24,6 +24,7 @@ from customer_finder.errors import (
     ExitCode,
 )
 from customer_finder.models import SearchRequest
+from customer_finder.output import stale_output_warning
 from customer_finder.overture import (
     assert_schema_matches_snapshot,
     connect_duckdb,
@@ -249,10 +250,13 @@ def calibration_prepare_cmd(
 ) -> None:
     """Create an empty calibration CSV from top leads for human review."""
     try:
+        stale = stale_output_warning(leads)
         path = prepare_calibration(leads, output, limit=limit, overwrite=overwrite)
     except CustomerFinderError as exc:
         typer.secho(exc.message, fg=typer.colors.RED, err=True)
         raise typer.Exit(code=exc.exit_code) from exc
+    if stale:
+        typer.secho(f"warning: {stale}", fg=typer.colors.YELLOW, err=True)
     typer.echo(f"Wrote {path} (limit={limit}). Fill the five review fields manually.")
 
 
@@ -281,10 +285,13 @@ def google_calibration_prepare_cmd(
 ) -> None:
     """Create Google match review CSV from leads with google_place_id."""
     try:
+        stale = stale_output_warning(leads)
         path = prepare_google_calibration(leads, output, limit=limit, overwrite=overwrite)
     except CustomerFinderError as exc:
         typer.secho(exc.message, fg=typer.colors.RED, err=True)
         raise typer.Exit(code=exc.exit_code) from exc
+    if stale:
+        typer.secho(f"warning: {stale}", fg=typer.colors.YELLOW, err=True)
     typer.echo(f"Wrote {path}. Fill same_entity=yes|no|uncertain manually.")
 
 
