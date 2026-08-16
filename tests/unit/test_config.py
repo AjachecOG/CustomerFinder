@@ -247,6 +247,20 @@ def test_validate_category_aliases_unknown() -> None:
         validate_category_aliases(["cafe", "not-real"], cfg)
 
 
+def test_builtin_target_categories_exclude_tea_rooms() -> None:
+    config = load_builtin_config()
+
+    assert (
+        config.resolve_category_alias(
+            basic_category=None,
+            taxonomy_primary="tea_room",
+            taxonomy_hierarchy=[],
+            taxonomy_alternates=[],
+        )
+        is None
+    )
+
+
 def test_cli_config_validate_builtin_ok() -> None:
     result = runner.invoke(app, ["config", "validate"])
     assert result.exit_code == 0

@@ -8,7 +8,7 @@ categories:
   cafe:
     display_name: Kawiarnia
     overture_basic: [cafe, coffee_shop]
-    overture_taxonomy: [cafe, coffee_shop, tea_room, coffee_roastery]
+    overture_taxonomy: [cafe, coffee_shop, coffee_roastery]
     score_weight: 20
   bakery:
     display_name: Piekarnia

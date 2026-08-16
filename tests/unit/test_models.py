@@ -27,8 +27,8 @@ def test_search_request_accepts_poland_point(tmp_path: Path) -> None:
         output_path=out,
     )
     assert req.categories == ["cafe", "bakery"]
-    assert req.enrich == "none"
     assert req.output_path == out
+    assert req.min_score == 0
 
 
 @pytest.mark.parametrize(
@@ -69,6 +69,18 @@ def test_search_request_output_must_be_csv(tmp_path: Path) -> None:
             radius_km=1,
             categories=["cafe"],
             output_path=tmp_path / "out.txt",
+        )
+
+
+def test_search_request_rejects_removed_google_fields(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError):
+        SearchRequest(
+            lat=51.1079,
+            lon=17.0385,
+            radius_km=3,
+            categories=["cafe"],
+            output_path=tmp_path / "out.csv",
+            enrich="google",  # type: ignore[call-arg]
         )
 
 

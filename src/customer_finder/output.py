@@ -46,7 +46,6 @@ CSV_COLUMNS: tuple[str, ...] = (
     "chain_reason",
     "confidence",
     "operating_status",
-    "google_place_id",
     "source_refs",
 )
 
@@ -149,7 +148,6 @@ def candidate_to_row(candidate: Candidate, *, overture_release: str) -> dict[str
         "chain_reason": candidate.chain_reason or "",
         "confidence": "" if raw.confidence is None else str(raw.confidence),
         "operating_status": raw.operating_status or "",
-        "google_place_id": candidate.google_place_id or "",
         "source_refs": _json_cell([ref.model_dump(mode="json") for ref in raw.source_refs]),
     }
     protected: dict[str, str] = {}
@@ -174,6 +172,7 @@ def sort_candidates(candidates: list[Candidate]) -> list[Candidate]:
         candidates,
         key=lambda c: (
             -c.score,
+            -(c.raw.confidence if c.raw.confidence is not None else -1.0),
             c.distance_m,
             (c.raw.name or "").lower(),
             c.raw.overture_id,
@@ -223,7 +222,6 @@ def build_manifest(
     command_parameters: dict[str, Any],
     overture_release: str,
     counts: dict[str, int],
-    google: dict[str, Any],
     warnings: list[str],
 ) -> dict[str, Any]:
     return {
@@ -235,7 +233,6 @@ def build_manifest(
         "command_parameters": command_parameters,
         "overture_release": overture_release,
         "counts": counts,
-        "google": google,
         "warnings": warnings,
         "tool_version": __version__,
         "python_version": sys.version.split()[0],

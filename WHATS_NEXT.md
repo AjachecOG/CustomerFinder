@@ -1,7 +1,7 @@
 # What's next — Customer Finder
 
-**Last updated:** 2026-08-11  
-**Branch / PR:** `cursor/milestone-1-models-config-13dc` → [#1](https://github.com/AjachecOG/CustomerFinder/pull/1)
+**Last updated:** 2026-08-16
+**Branch:** `calibration-review-gui` (on top of the cloud-agent MVP + audit fixes)
 
 ---
 
@@ -14,120 +14,74 @@
 | 2 — Geometry & Overture | Done (live works; STAC schema fallback) |
 | 3 — Candidate quality | Done |
 | 4 — Output & full CLI | Done |
-| **5 — Calibration (Wrocław)** | **YOU ARE HERE — needs your manual review** |
-| 6 — Google enrichment | Code done, **blocked** until `out/calibration.approved.json` |
-| 7 — Docs & release v0.1.0 | Docs mostly done; **tag after** M5 (+ optional Google smoke) |
+| 5 — Calibration (Wrocław) | Done — gate passed, approval valid |
+| 6 — API-free hardening | Done — no Places API path in the supported runtime |
+| **7 — Docs & release v0.1.0** | **Done — native Windows release gates passed** |
 
-**Code is effectively complete.** The remaining blockers are human calibration (required) and optional live Google smoke + git tag.
+Decision for v1: no commercial API key, no Google Places API calls. Google Maps
+links remain only for user-initiated manual verification in the localhost review desk.
 
 ---
 
 ## Manual checklist (do in order)
 
-### 1. Milestone 5 — fill calibration reviews
+### 1. Milestone 5 — completed
 
-Files already prepared (or regenerate if missing):
-
-- `out/leads_wroclaw.csv` — live 3 km Wrocław search
-- `out/calibration.csv` — 30 empty review rows with Maps links
-
-**Regenerate if needed:**
-
-```powershell
-pip install -e ".[dev]"
-finder search --lat 51.1079 --lon 17.0385 --radius-km 3 `
-  --categories cafe,bakery,pastry,ice_cream --enrich none `
-  --output out/leads_wroclaw.csv --overwrite
-
-finder calibration prepare --leads out/leads_wroclaw.csv `
-  --output out/calibration.csv --limit 30 --overwrite
-```
-
-**For every row in `out/calibration.csv`, open `google_maps_url` and fill all five fields:**
-
-| Field | Allowed values |
-|-------|----------------|
-| `entity_status` | `valid` \| `wrong_entity` \| `uncertain` |
-| `target_category` | `yes` \| `no` \| `uncertain` |
-| `operating_status_review` | `open` \| `closed` \| `uncertain` |
-| `independence` | `independent` \| `chain` \| `uncertain` |
-| `site_status` | `no_owned_site` \| `owned_site` \| `social_only` \| `uncertain` |
-
-Notes:
-
-- All five must be filled if any is filled (no partial rows).
-- Prefer `owned_site` over `social_only` when both apply.
-- Do **not** leave blanks and assume “no site”.
-
-**Then evaluate:**
-
-```powershell
-finder calibration evaluate `
-  --file out/calibration.csv `
-  --output out/calibration.summary.json
-```
-
-**Pass criteria:**
-
-- All 30 prepared rows complete
-- Top 20: `target_precision >= 0.80`
-- Top 20: `no_site_precision >= 0.70` (`site_status` in `no_owned_site` or `social_only` among valid independents)
-
-On pass, this creates **`out/calibration.approved.json`**. Keep that file; Google enrich checks its hash against the CSV.
+- `out/calibration.approved.json` exists and its hashes validate.
+- Top 20: `target_precision = 0.80`.
+- Top 20: `no_site_precision = 0.75`.
+- Full calibration: 30/30 complete.
+- Live Overture run: 23.2 seconds on release `2026-07-22.0`.
 
 ---
 
-### 2. Milestone 6 — optional Google smoke (after approval)
+### 2. Milestone 6 — API-free hardening — completed
 
-1. Put key in `.env` (never commit it):
+Do not create a Google API key and do not run a Google smoke test.
 
-   ```text
-   GOOGLE_MAPS_API_KEY=your_key_here
-   ```
+Implementation work:
 
-2. Run a small enrich (budget is HTTP attempts, including retries):
+- [x] Remove `--enrich google`, `--google-max-requests` and Google-only strict behavior from the public CLI contract.
+- [x] Remove or hard-disable production calls to Google Places API.
+- [x] Remove `google_place_id` and Google aggregates from the v1 CSV/manifest contract.
+- [x] Remove `google-calibration` commands from the supported v1 workflow.
+- [x] Keep ordinary Maps search URLs and the manual calibration GUI.
+- [x] Update README and CLI help; remove the now-unneeded `.env.example`.
+- [x] Add a regression test proving the standard backend never calls Google hosts.
+- [x] Run Ruff, mypy, all offline tests and one pinned-release Overture smoke.
 
-```powershell
-finder search --lat 51.1079 --lon 17.0385 --radius-km 3 `
-  --categories cafe,bakery,pastry,ice_cream `
-  --enrich google --google-max-requests 10 `
-  --output out/leads_wroclaw_google.csv
-```
-
-3. If you get ≥10 rows with `google_place_id`, optionally review matches:
-
-```powershell
-finder google-calibration prepare `
-  --leads out/leads_wroclaw_google.csv `
-  --output out/google-match-review.csv --limit 10
-
-# Fill same_entity = yes | no | uncertain for each row, then:
-finder google-calibration evaluate `
-  --file out/google-match-review.csv `
-  --output out/google-match-review.summary.json
-```
-
-Gate for Google match review: **10/10 `yes`** (no `uncertain`).
+M6 passes when `finder search` works from a clean environment without `.env` or
+commercial credentials and no supported runtime path can call Google Places API.
 
 ---
 
 ### 3. Milestone 7 — release tag
 
-After M5 passes (and ideally Google smoke if you care about enrich):
+After M6 passes:
 
-- [ ] Confirm README / ATTRIBUTION / CHANGELOG look right
-- [ ] Merge PR #1
-- [ ] Tag `v0.1.0` on the merged commit
+- [x] Confirm README / ATTRIBUTION / CHANGELOG look right
+- [x] Pass a clean Python 3.12 installation and offline fixture search
+- [x] Pass Ruff, format, mypy and tests (117 passed, 1 deselected, 88% coverage)
+- [x] Pass a browser GUI smoke test with no external requests or console errors
+- [x] Pass live `latest`: 194 rows from release `2026-07-22.0`
+- [x] Audit live top 20: zero post-dedup conflicts, chain ratio 0%, valid bundle hashes
+- [x] Validate the approved calibration hashes (`target_precision=0.80`, `no_site_precision=0.75`)
+- [x] Package `LICENSE` and the static GUI in a clean wheel; no forbidden runtime packages
+- [x] Pass a native Windows offline fixture search without Docker or WSL (18 rows)
+- [x] Review and commit the current implementation changes
+- [x] Apply tag `v0.1.0` to the release commit
 
 ---
 
 ## What you can ignore for now
 
 - `out/*` is gitignored (except `.gitkeep`) — leads/calibration stay local
-- Live STAC `schema:version` is still null; the app falls back to taxonomy snapshot `1.18.0` with a warning — fine until Overture fixes STAC
+- Live STAC may be unavailable or omit `schema:version`; the app discovers the
+  latest retained release from Overture's official public S3 listing and uses
+  taxonomy snapshot `1.18.0` with an explicit warning (plan §9.1)
 
 ---
 
 ## Quick status one-liner
 
-**Paused on Milestone 5 human calibration → fill `out/calibration.csv` → `finder calibration evaluate` → then Google (M6) and tag v0.1.0 (M7).**
+**Milestones 0–7 passed; v0.1.0 uses native Python 3.12 on Windows.**

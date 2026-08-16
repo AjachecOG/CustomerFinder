@@ -11,7 +11,6 @@ class ExitCode:
     BAD_ARGS = 2
     CONFIG = 3
     OVERTURE = 4
-    GOOGLE_STRICT = 5
     OUTPUT = 6
 
 
@@ -32,7 +31,7 @@ class ArgumentError(CustomerFinderError):
 
 
 class ConfigError(CustomerFinderError):
-    """Invalid YAML, missing config files, or missing Google API key."""
+    """Invalid YAML or missing config files."""
 
     exit_code = ExitCode.CONFIG
 
@@ -58,12 +57,6 @@ class OvertureError(CustomerFinderError):
     """STAC, DuckDB, or Overture schema failures."""
 
     exit_code = ExitCode.OVERTURE
-
-
-class GoogleEnrichmentError(CustomerFinderError):
-    """Required Google enrichment failed under strict mode."""
-
-    exit_code = ExitCode.GOOGLE_STRICT
 
 
 class OutputError(CustomerFinderError):

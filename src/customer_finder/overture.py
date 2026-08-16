@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import re
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -20,7 +21,16 @@ from customer_finder.models import RawOverturePlace, SourceRef
 from customer_finder.settings import AppConfig
 
 STAC_CATALOG_URL = "https://stac.overturemaps.org/catalog.json"
-STAC_ALLOWED_HOSTS = frozenset({"stac.overturemaps.org"})
+S3_RELEASE_LIST_URL = (
+    "https://overturemaps-us-west-2.s3.us-west-2.amazonaws.com/"
+    "?list-type=2&delimiter=%2F&prefix=release%2F"
+)
+OVERTURE_ALLOWED_HOSTS = frozenset(
+    {
+        "stac.overturemaps.org",
+        "overturemaps-us-west-2.s3.us-west-2.amazonaws.com",
+    }
+)
 RELEASE_ID_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\.\d+$")
 SCHEMA_VERSION_RE = re.compile(r"^v?(\d+\.\d+\.\d+)$")
 
@@ -36,6 +46,10 @@ STAC_SCHEMA_FALLBACK_WARNING = (
     "stac_schema_version_missing: STAC child catalog schema:version is null; "
     "using taxonomy_snapshot.schema_version as temporary fallback "
     "(checked 2026-08-11 against https://stac.overturemaps.org/)"
+)
+STAC_RELEASE_FALLBACK_WARNING = (
+    "stac_unavailable: discovered latest release from the official public S3 listing; "
+    "using taxonomy_snapshot.schema_version"
 )
 
 REQUIRED_COLUMNS: tuple[str, ...] = (
@@ -82,15 +96,15 @@ def _normalize_schema_version(raw: str) -> str:
     return match.group(1)
 
 
-def _assert_stac_url(url: str) -> None:
+def _assert_overture_url(url: str) -> None:
     parsed = urlparse(url)
     host = (parsed.hostname or "").lower()
-    if parsed.scheme != "https" or host not in STAC_ALLOWED_HOSTS:
-        raise OvertureError(f"Refusing STAC URL host={host!r}")
+    if parsed.scheme != "https" or host not in OVERTURE_ALLOWED_HOSTS:
+        raise OvertureError(f"Refusing Overture catalog URL host={host!r}")
 
 
-def _stac_request_hook(request: httpx.Request) -> None:
-    _assert_stac_url(str(request.url))
+def _overture_request_hook(request: httpx.Request) -> None:
+    _assert_overture_url(str(request.url))
 
 
 def _http_client() -> httpx.Client:
@@ -98,7 +112,7 @@ def _http_client() -> httpx.Client:
         timeout=HTTP_TIMEOUT_S,
         headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
         follow_redirects=True,
-        event_hooks={"request": [_stac_request_hook]},
+        event_hooks={"request": [_overture_request_hook]},
     )
 
 
@@ -108,7 +122,7 @@ def _get_json_with_backoff(client: httpx.Client, url: str) -> dict[str, Any]:
 
     delays = (0.0, 1.0, 2.0)
     last_exc: Exception | None = None
-    _assert_stac_url(url)
+    _assert_overture_url(url)
     for attempt, delay in enumerate(delays, start=1):
         if delay:
             time.sleep(delay)
@@ -128,6 +142,60 @@ def _get_json_with_backoff(client: httpx.Client, url: str) -> dict[str, Any]:
         f"STAC unavailable at stage=fetch url={url}. "
         f"Retry exhausted ({last_exc!s}). Use --overture-release YYYY-MM-DD.N"
     ) from last_exc
+
+
+def _get_text_with_backoff(client: httpx.Client, url: str) -> str:
+    """Fetch an official Overture text resource with bounded retries."""
+    import time
+
+    delays = (0.0, 1.0, 2.0)
+    last_exc: Exception | None = None
+    _assert_overture_url(url)
+    for attempt, delay in enumerate(delays, start=1):
+        if delay:
+            time.sleep(delay)
+        try:
+            response = client.get(url)
+            response.raise_for_status()
+            return response.text
+        except (httpx.TransportError, httpx.TimeoutException, httpx.HTTPStatusError) as exc:
+            last_exc = exc
+            if attempt == len(delays):
+                break
+    assert last_exc is not None
+    raise OvertureError(
+        f"Overture release listing unavailable at stage=fetch url={url}. "
+        f"Retry exhausted ({last_exc!s}). Use --overture-release YYYY-MM-DD.N"
+    ) from last_exc
+
+
+def _latest_release_from_s3(client: httpx.Client) -> str:
+    """Discover the newest retained release from Overture's public S3 bucket."""
+    payload = _get_text_with_backoff(client, S3_RELEASE_LIST_URL)
+    try:
+        root = ET.fromstring(payload)
+    except ET.ParseError as exc:
+        raise OvertureError(
+            f"Overture S3 release listing is invalid XML (url={S3_RELEASE_LIST_URL})"
+        ) from exc
+
+    releases: list[str] = []
+    for element in root.iter():
+        if not element.tag.endswith("Prefix") or not element.text:
+            continue
+        match = re.fullmatch(r"release/(\d{4}-\d{2}-\d{2}\.\d+)/", element.text)
+        if match and RELEASE_ID_RE.match(match.group(1)):
+            releases.append(match.group(1))
+    if not releases:
+        raise OvertureError(
+            f"Overture S3 release listing contains no valid releases (url={S3_RELEASE_LIST_URL})"
+        )
+
+    def release_key(release_id: str) -> tuple[datetime, int]:
+        date_part, revision = release_id.rsplit(".", 1)
+        return datetime.strptime(date_part, "%Y-%m-%d"), int(revision)
+
+    return max(releases, key=release_key)
 
 
 def _child_href(catalog: dict[str, Any], release_id: str, *, catalog_url: str) -> str:
@@ -187,9 +255,9 @@ def resolve_release(
 
     When STAC is unavailable and the user passed an explicit release id, the
     release is accepted without STAC and ``snapshot_schema_version`` is used so
-    the pipeline can continue (plan §9.1). ``latest`` always requires STAC for
-    the release id, but may fall back to the taxonomy snapshot when STAC omits
-    ``schema:version`` (temporary amendment while Overture publishes null).
+    the pipeline can continue (plan §9.1). If STAC is unavailable, ``latest``
+    is discovered from Overture's official public S3 listing and uses the
+    taxonomy snapshot schema version with an explicit warning.
     """
     owns_client = client is None
     http = client or _http_client()
@@ -201,7 +269,20 @@ def resolve_release(
             catalog = _get_json_with_backoff(http, STAC_CATALOG_URL)
         except OvertureError as stac_exc:
             if release == "latest":
-                raise stac_exc
+                if not snapshot_schema_version:
+                    raise stac_exc
+                release_id = _latest_release_from_s3(http)
+                return ResolvedRelease(
+                    release_id=release_id,
+                    schema_version=_normalize_schema_version(snapshot_schema_version),
+                    parquet_glob=_parquet_glob(release_id),
+                    catalog_url=S3_RELEASE_LIST_URL,
+                    schema_source="taxonomy_snapshot_fallback",
+                    warnings=(
+                        f"{STAC_RELEASE_FALLBACK_WARNING}={snapshot_schema_version} "
+                        f"release={release_id}",
+                    ),
+                )
             if not snapshot_schema_version:
                 raise OvertureError(
                     f"STAC unavailable at stage=resolve url={STAC_CATALOG_URL}. "

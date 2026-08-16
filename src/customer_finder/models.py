@@ -105,7 +105,6 @@ class Candidate(BaseModel):
     bucket: CandidateBucket
     score: int = Field(ge=0, le=100)
     score_reasons: list[str] = Field(default_factory=list)
-    google_place_id: str | None = None
 
 
 class CalibrationReview(BaseModel):
@@ -135,20 +134,6 @@ class CalibrationReview(BaseModel):
         return self
 
 
-class GoogleMatchResult(BaseModel):
-    """Session-only Google Places match outcome (not persisted as raw JSON)."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    status: Literal["matched", "not_found", "ambiguous", "error", "skipped_budget"]
-    place_id: str | None = None
-    website_kind: Literal["owned", "social", "aggregator", "none", "unknown"]
-    name_similarity: float | None = None
-    address_similarity: float | None = None
-    match_distance_m: int | None = None
-    warning: str | None = None
-
-
 class SearchRequest(BaseModel):
     """Validated search parameters; network access must not precede validation."""
 
@@ -158,14 +143,11 @@ class SearchRequest(BaseModel):
     lon: float
     radius_km: float
     categories: list[str] = Field(min_length=1)
-    enrich: Literal["none", "google"] = "none"
     output_path: Path
     min_score: int = Field(default=0, ge=0, le=100)
     top: int | None = Field(default=None, gt=0)
     include_has_site: bool = False
     overture_release: str = "latest"
-    google_max_requests: int = Field(default=50, ge=0, le=200)
-    strict: bool = False
     config_dir: Path | None = None
     overwrite: bool = False
 

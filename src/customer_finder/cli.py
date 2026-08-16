@@ -13,10 +13,9 @@ from pydantic import ValidationError
 from customer_finder import __version__
 from customer_finder.calibration import (
     evaluate_calibration,
-    evaluate_google_calibration,
     prepare_calibration,
-    prepare_google_calibration,
 )
+from customer_finder.calibration_gui import GuiSession, serve_gui
 from customer_finder.errors import (
     ArgumentError,
     ConfigError,
@@ -35,7 +34,10 @@ from customer_finder.settings import load_config
 
 app = typer.Typer(
     name="finder",
-    help="Find local cafes and bakeries likely without an owned website.",
+    help=(
+        "Find local cafes and bakeries likely without an owned website. "
+        "Overture-only; no commercial API key required."
+    ),
     no_args_is_help=True,
     add_completion=False,
 )
@@ -63,14 +65,6 @@ calibration_app = typer.Typer(
     add_completion=False,
 )
 app.add_typer(calibration_app, name="calibration")
-
-google_calibration_app = typer.Typer(
-    name="google-calibration",
-    help="Prepare and evaluate Google match identity reviews.",
-    no_args_is_help=True,
-    add_completion=False,
-)
-app.add_typer(google_calibration_app, name="google-calibration")
 
 
 @app.command("version")
@@ -145,6 +139,8 @@ def overture_schema_cmd(
     typer.echo(f"schema_version={resolved.schema_version}")
     typer.echo(f"parquet={resolved.parquet_glob}")
     typer.echo(f"snapshot_schema_version={cfg.taxonomy_snapshot.schema_version}")
+    for warning in resolved.warnings:
+        typer.secho(f"warning: {warning}", fg=typer.colors.YELLOW, err=True)
 
 
 def configure_logging(*, verbose: bool) -> None:
@@ -165,13 +161,10 @@ def search_cmd(
         typer.Option("--categories", help="Comma-separated category aliases."),
     ],
     output: Annotated[Path, typer.Option("--output", help="Output CSV path.")],
-    enrich: Annotated[str, typer.Option("--enrich")] = "none",
     min_score: Annotated[int, typer.Option("--min-score")] = 0,
     top: Annotated[int | None, typer.Option("--top")] = None,
     include_has_site: Annotated[bool, typer.Option("--include-has-site")] = False,
     overture_release: Annotated[str, typer.Option("--overture-release")] = "latest",
-    google_max_requests: Annotated[int, typer.Option("--google-max-requests")] = 50,
-    strict: Annotated[bool, typer.Option("--strict")] = False,
     config_dir: Annotated[Path | None, typer.Option("--config-dir")] = None,
     overwrite: Annotated[bool, typer.Option("--overwrite")] = False,
     verbose: Annotated[bool, typer.Option("--verbose")] = False,
@@ -186,7 +179,7 @@ def search_cmd(
         ),
     ] = None,
 ) -> None:
-    """Search Overture Places and write CSV + manifest + verify links."""
+    """Search Overture Places; write CSV, manifest, and verify links. No API key required."""
     configure_logging(verbose=verbose)
     try:
         request = SearchRequest.model_validate(
@@ -195,14 +188,11 @@ def search_cmd(
                 "lon": lon,
                 "radius_km": radius_km,
                 "categories": categories,
-                "enrich": enrich,
                 "output_path": output,
                 "min_score": min_score,
                 "top": top,
                 "include_has_site": include_has_site,
                 "overture_release": overture_release,
-                "google_max_requests": google_max_requests,
-                "strict": strict,
                 "config_dir": config_dir,
                 "overwrite": overwrite,
             }
@@ -236,6 +226,13 @@ def search_cmd(
         f"Wrote {result.output_paths.csv_path} "
         f"(rows={counts.get('output', 0)}, release={result.manifest['overture_release']})"
     )
+    typer.echo(
+        "bundle: "
+        f"manifest={result.output_paths.manifest_path}, "
+        f"verify_links={result.output_paths.verify_links_path}, "
+        f"complete={result.output_paths.complete_path}"
+    )
+    typer.echo(f"data_fresh_until={result.manifest['data_fresh_until']}")
     typer.echo("counts: " + ", ".join(f"{key}={value}" for key, value in sorted(counts.items())))
     for warning in result.warnings:
         typer.secho(f"warning: {warning}", fg=typer.colors.YELLOW, err=True)
@@ -276,47 +273,60 @@ def calibration_evaluate_cmd(
         typer.echo(f"approved={summary['approved_path']}")
 
 
-@google_calibration_app.command("prepare")
-def google_calibration_prepare_cmd(
-    leads: Annotated[Path, typer.Option("--leads", exists=True, dir_okay=False)],
-    output: Annotated[Path, typer.Option("--output")],
-    limit: Annotated[int, typer.Option("--limit")] = 10,
-    overwrite: Annotated[bool, typer.Option("--overwrite")] = False,
+@calibration_app.command("gui")
+def calibration_gui_cmd(
+    leads: Annotated[
+        Path | None,
+        typer.Option("--leads", help="Leads CSV path used for search/prepare."),
+    ] = None,
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", help="Calibration CSV written by the review desk."),
+    ] = None,
+    summary: Annotated[
+        Path | None,
+        typer.Option("--summary", help="Evaluate summary JSON path."),
+    ] = None,
+    host: Annotated[str, typer.Option("--host")] = "127.0.0.1",
+    port: Annotated[int, typer.Option("--port")] = 8765,
+    open_browser: Annotated[
+        bool,
+        typer.Option("--open-browser/--no-open-browser"),
+    ] = True,
+    parquet: Annotated[
+        Path | None,
+        typer.Option(
+            "--parquet",
+            help="Optional offline GeoParquet (skips live Overture).",
+            exists=True,
+            dir_okay=False,
+            resolve_path=True,
+        ),
+    ] = None,
+    overture_release: Annotated[
+        str,
+        typer.Option(
+            "--overture-release",
+            help="Overture release for GUI searches (latest or YYYY-MM-DD.N).",
+        ),
+    ] = "latest",
+    limit: Annotated[int, typer.Option("--limit")] = 30,
 ) -> None:
-    """Create Google match review CSV from leads with google_place_id."""
-    try:
-        stale = stale_output_warning(leads)
-        path = prepare_google_calibration(leads, output, limit=limit, overwrite=overwrite)
-    except CustomerFinderError as exc:
-        typer.secho(exc.message, fg=typer.colors.RED, err=True)
-        raise typer.Exit(code=exc.exit_code) from exc
-    if stale:
-        typer.secho(f"warning: {stale}", fg=typer.colors.YELLOW, err=True)
-    typer.echo(f"Wrote {path}. Fill same_entity=yes|no|uncertain manually.")
-
-
-@google_calibration_app.command("evaluate")
-def google_calibration_evaluate_cmd(
-    file: Annotated[Path, typer.Option("--file", exists=True, dir_okay=False)],
-    output: Annotated[Path, typer.Option("--output")],
-) -> None:
-    """Evaluate Google match reviews; require 10/10 yes for approval."""
-    try:
-        summary = evaluate_google_calibration(file, output)
-    except CustomerFinderError as exc:
-        typer.secho(exc.message, fg=typer.colors.RED, err=True)
-        raise typer.Exit(code=exc.exit_code) from exc
-    typer.echo(
-        json.dumps(
-            {
-                "passed": summary["passed"],
-                "entity_match_precision": summary["entity_match_precision"],
-            },
-            indent=2,
-        )
+    """Open a localhost review desk for Milestone 5 calibration."""
+    session = GuiSession(
+        leads_csv=leads or Path("out/leads_wroclaw.csv"),
+        calibration_csv=output or Path("out/calibration.csv"),
+        summary_path=summary or Path("out/calibration.summary.json"),
+        overture_release=overture_release,
+        parquet_path=parquet,
+        limit=limit,
     )
-    if summary.get("approved_path"):
-        typer.echo(f"approved={summary['approved_path']}")
+    typer.echo(f"Calibration GUI: http://127.0.0.1:{port}/")
+    try:
+        serve_gui(session, host=host, port=port, open_browser=open_browser)
+    except CustomerFinderError as exc:
+        typer.secho(exc.message, fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=exc.exit_code) from exc
 
 
 if __name__ == "__main__":

@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Customer Finder — biurko kalibracji</title>
+  <style>
+    :root {
+      --paper: #efe4cc;
+      --ink: #1a120c;
+      --rule: #c9b48a;
+      --stamp: #b42318;
+      --pass: #1f5c3a;
+      --chip: #f7f1e2;
+      --shadow: #d7c7a4;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      background: #d9c7a3;
+      color: var(--ink);
+      font-family: Palatino, "Palatino Linotype", "Book Antiqua", Georgia, serif;
+    }
+    body {
+      min-height: 100vh;
+      background-image: repeating-linear-gradient(
+        90deg,
+        transparent 0,
+        transparent 47px,
+        rgba(180, 35, 24, 0.08) 47px,
+        rgba(180, 35, 24, 0.08) 48px
+      );
+    }
+    header, main, footer { max-width: 1180px; margin: 0 auto; padding: 0 20px; }
+    header {
+      padding-top: 28px;
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: flex-end;
+    }
+    .mast {
+      font-size: 13px;
+      letter-spacing: 0.28em;
+      text-transform: uppercase;
+      color: var(--stamp);
+    }
+    h1 {
+      font-size: 42px;
+      line-height: 0.9;
+      margin: 6px 0 0;
+      font-weight: 700;
+    }
+    #status-text {
+      min-width: 280px;
+      background: var(--chip);
+      border: 2px solid var(--ink);
+      padding: 10px 12px;
+      font-family: Consolas, "Lucida Console", monospace;
+      font-size: 13px;
+      white-space: pre-wrap;
+    }
+    .sheet {
+      margin-top: 18px;
+      background: var(--paper);
+      border: 3px solid var(--ink);
+      padding: 18px;
+    }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+    label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+    input[type="text"], input[type="number"], textarea {
+      font: 16px Consolas, "Lucida Console", monospace;
+      padding: 10px;
+      border: 2px solid var(--ink);
+      background: #fffdf6;
+      min-width: 140px;
+    }
+    textarea { width: 100%; min-height: 64px; }
+    button {
+      font-family: inherit;
+      font-size: 16px;
+      min-height: 48px;
+      padding: 10px 16px;
+      border: 2px solid var(--ink);
+      background: var(--chip);
+      cursor: pointer;
+    }
+    button:hover { background: #fff; }
+    button.primary { background: var(--ink); color: var(--paper); }
+    button.primary:hover { background: #3a2a1c; }
+    button.stamp { background: var(--stamp); color: #fff; border-color: var(--stamp); }
+    button[aria-pressed="true"] {
+      background: var(--ink);
+      color: var(--paper);
+    }
+    .hint { font-size: 14px; margin: 8px 0 0; max-width: 70ch; }
+    .desk {
+      display: grid;
+      grid-template-columns: 220px 1fr;
+      gap: 16px;
+      margin-top: 16px;
+    }
+    #rank-list {
+      border: 2px solid var(--ink);
+      background: #fffdf6;
+      max-height: 72vh;
+      overflow: auto;
+      padding: 0;
+      margin: 0;
+      list-style: none;
+    }
+    #rank-list button {
+      width: 100%;
+      border: 0;
+      border-bottom: 1px solid var(--rule);
+      text-align: left;
+      min-height: 40px;
+      font-size: 14px;
+      background: transparent;
+    }
+    #rank-list button[data-status="complete"] { color: var(--pass); }
+    #rank-list button[data-status="invalid"] { color: var(--stamp); }
+    #rank-list button.active { background: var(--ink); color: var(--paper); }
+    .card { border: 2px solid var(--ink); padding: 16px; background: #fffdf6; }
+    .meta {
+      font-family: Consolas, "Lucida Console", monospace;
+      font-size: 13px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px 16px;
+      margin: 12px 0;
+    }
+    .field { margin: 14px 0; }
+    .field h3 { margin: 0 0 8px; font-size: 16px; }
+    .choices { display: flex; flex-wrap: wrap; gap: 8px; }
+    .choices button { min-width: 160px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+    #evaluate-panel {
+      margin-top: 16px;
+      border: 3px dashed var(--ink);
+      padding: 12px;
+      font-family: Consolas, "Lucida Console", monospace;
+      white-space: pre-wrap;
+    }
+    .pass { color: var(--pass); font-weight: 700; }
+    .fail { color: var(--stamp); font-weight: 700; }
+    #busy {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(26, 18, 12, 0.45);
+      color: var(--paper);
+      font-size: 28px;
+      align-items: center;
+      justify-content: center;
+    }
+    #busy.on { display: flex; }
+    .chk { flex-direction: row; align-items: center; gap: 8px; min-height: 48px; }
+    .chk input { width: 20px; height: 20px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <div class="mast">Milestone 5 · Wrocław · karta inspektora</div>
+      <h1>Biurko kalibracji</h1>
+    </div>
+    <div id="status-text" role="status" aria-live="polite">Ładowanie…</div>
+  </header>
+  <main>
+    <section class="sheet" id="setup">
+      <div class="mast">Krok 1 — wyszukaj albo wczytaj</div>
+      <div class="row" style="margin-top:12px">
+        <label>Szerokość <input id="lat" type="number" step="0.0001" value="51.1079"></label>
+        <label>Długość <input id="lon" type="number" step="0.0001" value="17.0385"></label>
+        <label>Promień km <input id="radius-km" type="number" step="0.1" value="3"></label>
+        <label>Kategorie <input id="categories" type="text" value="cafe,bakery,pastry,ice_cream" style="min-width:280px"></label>
+        <label>Wydanie Overture <input id="overture-release" type="text" value="latest" style="min-width:150px"></label>
+        <label class="chk"><input id="chk-overwrite" type="checkbox"> Nadpisz istniejące oceny</label>
+      </div>
+      <div class="actions">
+        <button id="btn-search" class="primary" type="button">Uruchom wyszukiwanie 3 km</button>
+        <button id="btn-prepare" type="button">Wczytaj istniejący CSV leadów</button>
+      </div>
+      <p class="hint">
+        Najpierw search (sieć, pierwsze uruchomienie może potrwać). Potem oceń 30 kart:
+        otwórz Google Maps, kliknij 5 pól, zapisz. Nie zgaduj „brak strony”.
+      </p>
+    </section>
+
+    <section class="desk">
+      <ol id="rank-list"></ol>
+      <article class="card" id="review-card">
+        <div class="mast" id="rank-heading">Brak kart</div>
+        <h2 id="place-name">—</h2>
+        <div class="meta" id="place-meta"></div>
+        <div class="actions">
+          <button id="btn-open-maps" class="stamp" type="button">Otwórz Google Maps</button>
+        </div>
+
+        <div class="field">
+          <h3>1. entity_status — czy to ta sama firma?</h3>
+          <div class="choices" data-field="entity_status">
+            <button type="button" id="field-entity_status-valid" data-value="valid">valid — ta sama firma</button>
+            <button type="button" id="field-entity_status-wrong_entity" data-value="wrong_entity">wrong_entity — inny obiekt</button>
+            <button type="button" id="field-entity_status-uncertain" data-value="uncertain">uncertain</button>
+          </div>
+        </div>
+        <div class="field">
+          <h3>2. target_category — kawiarnia / piekarnia / cukiernia / lodziarnia?</h3>
+          <div class="choices" data-field="target_category">
+            <button type="button" id="field-target_category-yes" data-value="yes">yes — docelowa kategoria</button>
+            <button type="button" id="field-target_category-no" data-value="no">no — inny typ</button>
+            <button type="button" id="field-target_category-uncertain" data-value="uncertain">uncertain</button>
+          </div>
+        </div>
+        <div class="field">
+          <h3>3. operating_status_review — czy działa?</h3>
+          <div class="choices" data-field="operating_status_review">
+            <button type="button" id="field-operating_status_review-open" data-value="open">open — otwarte</button>
+            <button type="button" id="field-operating_status_review-closed" data-value="closed">closed — zamknięte</button>
+            <button type="button" id="field-operating_status_review-uncertain" data-value="uncertain">uncertain</button>
+          </div>
+        </div>
+        <div class="field">
+          <h3>4. independence — niezależny lokal czy sieć?</h3>
+          <div class="choices" data-field="independence">
+            <button type="button" id="field-independence-independent" data-value="independent">independent</button>
+            <button type="button" id="field-independence-chain" data-value="chain">chain — sieć</button>
+            <button type="button" id="field-independence-uncertain" data-value="uncertain">uncertain</button>
+          </div>
+        </div>
+        <div class="field">
+          <h3>5. site_status — własna domena? (owned_site wygrywa ze social)</h3>
+          <div class="choices" data-field="site_status">
+            <button type="button" id="field-site_status-owned_site" data-value="owned_site">owned_site — własna strona</button>
+            <button type="button" id="field-site_status-social_only" data-value="social_only">social_only — tylko FB/IG</button>
+            <button type="button" id="field-site_status-no_owned_site" data-value="no_owned_site">no_owned_site — brak strony i sociali</button>
+            <button type="button" id="field-site_status-uncertain" data-value="uncertain">uncertain</button>
+          </div>
+        </div>
+        <label>notes (opcjonalnie)
+          <textarea id="notes" placeholder="np. sieć, strona tylko na Facebooku"></textarea>
+        </label>
+        <div class="actions">
+          <button id="btn-prev" type="button">Poprzedni</button>
+          <button id="btn-save-next" class="primary" type="button">Zapisz i następny</button>
+          <button id="btn-evaluate" class="stamp" type="button">Oceń bramkę (evaluate)</button>
+        </div>
+      </article>
+    </section>
+    <pre id="evaluate-panel">Brak wyniku evaluate.</pre>
+  </main>
+  <div id="busy">Czekam na Overture…</div>
+  <script>
+    const FIELDS = [
+      "entity_status",
+      "target_category",
+      "operating_status_review",
+      "independence",
+      "site_status",
+    ];
+    let state = null;
+    let currentRank = 1;
+    let draft = {};
+
+    const $ = (id) => document.getElementById(id);
+
+    function setStatus(text) {
+      $("status-text").textContent = text;
+    }
+
+    function currentRow() {
+      return (state.rows || []).find((row) => Number(row.rank) === currentRank) || null;
+    }
+
+    function selectedValue(field) {
+      const pressed = document.querySelector(`[data-field="${field}"] button[aria-pressed="true"]`);
+      return pressed ? pressed.dataset.value : (draft[field] || "");
+    }
+
+    function setChoice(field, value) {
+      draft[field] = value || "";
+      document.querySelectorAll(`[data-field="${field}"] button`).forEach((btn) => {
+        btn.setAttribute("aria-pressed", btn.dataset.value === value ? "true" : "false");
+      });
+    }
+
+    function renderList() {
+      const list = $("rank-list");
+      list.replaceChildren();
+      (state.rows || []).forEach((row) => {
+        const item = document.createElement("li");
+        const btn = document.createElement("button");
+        btn.id = `rank-item-${row.rank}`;
+        btn.type = "button";
+        btn.dataset.status = row.status;
+        btn.className = Number(row.rank) === currentRank ? "active" : "";
+        btn.textContent = `${row.rank}. ${row.status === "complete" ? "OK" : row.status === "invalid" ? "ERR" : "—"}  ${row.display_name || row.name}`;
+        btn.addEventListener("click", () => {
+          currentRank = Number(row.rank);
+          loadDraftFromRow(row);
+          render();
+        });
+        item.appendChild(btn);
+        list.appendChild(item);
+      });
+    }
+
+    function loadDraftFromRow(row) {
+      draft = {};
+      FIELDS.forEach((field) => { draft[field] = row[field] || ""; });
+      $("notes").value = row.notes || "";
+    }
+
+    function renderCard() {
+      const row = currentRow();
+      if (!row) {
+        $("rank-heading").textContent = "Brak kart — uruchom search albo prepare";
+        $("place-name").textContent = "—";
+        $("place-meta").textContent = "";
+        return;
+      }
+      $("rank-heading").textContent = `KARTA ${row.rank} / ${state.row_count} · ${row.status}`;
+      $("place-name").textContent = row.display_name || row.name || "(bez nazwy)";
+      const ctx = row.context || {};
+      const metaLines = [
+        `overture_id: ${row.overture_id}`,
+        `kategoria Overture: ${ctx.category || "—"}`,
+        `adres: ${ctx.address || "—"} ${ctx.locality || ""}`,
+        `bucket: ${ctx.bucket || "—"}  score: ${ctx.score || "—"}`,
+        `owned_domains: ${ctx.owned_domains || "[]"}`,
+        `socials: ${ctx.socials || "[]"}`,
+        `aggregators: ${ctx.aggregators || "[]"}`,
+        `is_chain: ${ctx.is_chain || "—"}  operating: ${ctx.operating_status || "—"}`,
+      ];
+      const meta = $("place-meta");
+      meta.replaceChildren();
+      metaLines.forEach((line) => {
+        const item = document.createElement("div");
+        item.textContent = line;
+        meta.appendChild(item);
+      });
+      FIELDS.forEach((field) => setChoice(field, draft[field] || row[field] || ""));
+      $("btn-open-maps").dataset.url = row.google_maps_url || "";
+    }
+
+    function renderSummary() {
+      const summary = state.summary;
+      const approval = state.approval || {};
+      const panel = $("evaluate-panel");
+      panel.replaceChildren();
+      if (!summary) {
+        panel.appendChild(document.createTextNode("Brak wyniku evaluate.\n"));
+      } else {
+        const top = summary.top20 || {};
+        const passed = summary.passed ? "PASSED" : "FAILED";
+        const badge = document.createElement("span");
+        badge.className = summary.passed ? "pass" : "fail";
+        badge.textContent = passed;
+        panel.appendChild(badge);
+        panel.appendChild(document.createTextNode(
+          `\ncomplete_rows=${summary.complete_rows} expected=${summary.expected_rows}` +
+          `\ntop20.target_precision=${top.target_precision}` +
+          `\ntop20.no_site_precision=${top.no_site_precision}\n`
+        ));
+      }
+      if (!approval.exists) {
+        panel.appendChild(document.createTextNode("approval=brak"));
+        return;
+      }
+      const approvalBadge = document.createElement("span");
+      approvalBadge.className = approval.valid ? "pass" : "fail";
+      approvalBadge.textContent = approval.valid ? "APPROVAL VALID" : "APPROVAL INVALID";
+      panel.appendChild(approvalBadge);
+      panel.appendChild(document.createTextNode(
+        approval.valid
+          ? `\napproved_calibration=${approval.calibration_csv}`
+          : `\napproval_error=${approval.error || "unknown"}`
+      ));
+    }
+
+    function render() {
+      if (!state) return;
+      const job = state.job || {};
+      const row = currentRow();
+      setStatus(
+        `COMPLETE ${state.complete_count} / ${state.row_count || 0}\n` +
+        `RANK ${row ? row.rank : "-"} OF ${state.row_count || 0}\n` +
+        `JOB ${job.status || "idle"}${job.message ? " · " + job.message : ""}${job.error ? " · ERROR " + job.error : ""}`
+      );
+      $("busy").classList.toggle("on", job.status === "running");
+      renderList();
+      renderCard();
+      renderSummary();
+    }
+
+    async function api(path, body) {
+      const res = await fetch(path, {
+        method: body ? "POST" : "GET",
+        headers: body ? { "Content-Type": "application/json" } : undefined,
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      return data;
+    }
+
+    async function refresh() {
+      state = await api("/api/state");
+      $("overture-release").value = (state.defaults || {}).overture_release || "latest";
+      if (!currentRow() && state.rows && state.rows.length) currentRank = Number(state.rows[0].rank);
+      const row = currentRow();
+      if (row) loadDraftFromRow(row);
+      render();
+    }
+
+    async function pollJob() {
+      for (let i = 0; i < 180; i += 1) {
+        state = await api("/api/state");
+        render();
+        if ((state.job || {}).status !== "running") return;
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+    }
+
+    $("btn-search").addEventListener("click", async () => {
+      try {
+        setStatus("Starting search…");
+        state = await api("/api/search", {
+          lat: Number($("lat").value),
+          lon: Number($("lon").value),
+          radius_km: Number($("radius-km").value),
+          categories: $("categories").value,
+          overture_release: $("overture-release").value,
+          confirm_overwrite: $("chk-overwrite").checked,
+        });
+        render();
+        await pollJob();
+        const row = currentRow() || (state.rows && state.rows[0]);
+        if (row) { currentRank = Number(row.rank); loadDraftFromRow(row); }
+        render();
+      } catch (err) {
+        setStatus("ERROR " + err.message);
+      }
+    });
+
+    $("btn-prepare").addEventListener("click", async () => {
+      try {
+        state = await api("/api/prepare", { confirm_overwrite: $("chk-overwrite").checked });
+        currentRank = state.rows && state.rows[0] ? Number(state.rows[0].rank) : 1;
+        const row = currentRow();
+        if (row) loadDraftFromRow(row);
+        render();
+      } catch (err) {
+        setStatus("ERROR " + err.message);
+      }
+    });
+
+    $("btn-open-maps").addEventListener("click", () => {
+      const url = $("btn-open-maps").dataset.url;
+      if (url) window.open(url, "_blank", "noopener");
+    });
+
+    document.querySelectorAll(".choices").forEach((group) => {
+      group.querySelectorAll("button").forEach((btn) => {
+        btn.addEventListener("click", () => setChoice(group.dataset.field, btn.dataset.value));
+      });
+    });
+
+    $("btn-prev").addEventListener("click", () => {
+      currentRank = Math.max(1, currentRank - 1);
+      const row = currentRow();
+      if (row) loadDraftFromRow(row);
+      render();
+    });
+
+    $("btn-save-next").addEventListener("click", async () => {
+      const missing = FIELDS.filter((field) => !selectedValue(field));
+      if (missing.length) {
+        setStatus("ERROR fill all five fields first: " + missing.join(", "));
+        return;
+      }
+      try {
+        state = await api("/api/row", {
+          rank: currentRank,
+          entity_status: selectedValue("entity_status"),
+          target_category: selectedValue("target_category"),
+          operating_status_review: selectedValue("operating_status_review"),
+          independence: selectedValue("independence"),
+          site_status: selectedValue("site_status"),
+          notes: $("notes").value,
+        });
+        const next = (state.rows || []).find((row) => Number(row.rank) === currentRank + 1);
+        currentRank = next ? Number(next.rank) : currentRank;
+        const row = currentRow();
+        if (row) loadDraftFromRow(row);
+        render();
+      } catch (err) {
+        setStatus("ERROR " + err.message);
+      }
+    });
+
+    $("btn-evaluate").addEventListener("click", async () => {
+      try {
+        state = await api("/api/evaluate", {});
+        render();
+      } catch (err) {
+        setStatus("ERROR " + err.message);
+      }
+    });
+
+    refresh().catch((err) => setStatus("ERROR " + err.message));
+  </script>
+</body>
+</html>

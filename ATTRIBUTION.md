@@ -2,7 +2,7 @@
 
 ## Application
 
-Customer Finder is released under the MIT license (see `pyproject.toml`).
+Customer Finder is released under the MIT license (see `LICENSE`).
 
 ## Overture Maps data
 
@@ -13,13 +13,8 @@ Before redistributing derived CSVs or screenshots, follow the official
 Each successful run stores paired `dataset` / `license` values in the CSV
 `source_refs` column and records the Overture release id in the manifest.
 
-## Google Places API (optional)
+## Manual Google Maps links
 
-When `--enrich google` is used, requests go to the official Places API (Text Search New).
-Review:
-
-- [Places policies](https://developers.google.com/maps/documentation/places/web-service/policies)
-- [Pricing](https://developers.google.com/maps/billing-and-pricing/pricing)
-
-Do not store raw Google responses, ratings, or website URLs in product outputs.
-Only `google_place_id` may be persisted on a lead row.
+The tool may generate ordinary Google Maps search URLs so a person can open a
+listing in a browser. Customer Finder does not call Google Places API, does not
+fetch Maps pages, and does not store Google place identifiers or API payloads.

@@ -112,5 +112,4 @@ def score_candidate(
         bucket=bucket,
         score=score,
         score_reasons=reasons,
-        google_place_id=None,
     )

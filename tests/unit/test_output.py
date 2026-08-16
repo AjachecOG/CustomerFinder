@@ -15,6 +15,7 @@ from customer_finder.output import (
     derive_output_paths,
     preflight_output,
     protect_formula,
+    sort_candidates,
     stale_output_warning,
     write_success_bundle,
 )
@@ -52,13 +53,44 @@ def test_candidate_row_json_and_column_order() -> None:
         bucket=CandidateBucket.LIKELY_NO_SITE,
         score=50,
         score_reasons=["base:+10"],
-        google_place_id=None,
     )
     row = candidate_to_row(candidate, overture_release="fixture")
     assert list(row.keys()) == list(CSV_COLUMNS)
+    assert "google_place_id" not in CSV_COLUMNS
     assert row["name"] == "'=Evil"
     assert json.loads(row["phones"]) == ["+48111"]
     assert json.loads(row["score_reasons"]) == ["base:+10"]
+
+
+def test_sort_candidates_uses_confidence_before_distance_for_score_ties() -> None:
+    def candidate(oid: str, *, confidence: float | None, distance_m: int) -> Candidate:
+        place = RawOverturePlace(
+            overture_id=oid,
+            version=1,
+            name=oid,
+            lat=51.1,
+            lon=17.0,
+            confidence=confidence,
+        )
+        return Candidate(
+            raw=place,
+            distance_m=distance_m,
+            normalized_name=oid,
+            category_alias="cafe",
+            bucket=CandidateBucket.SOCIAL_ONLY,
+            score=79,
+            score_reasons=["fixture"],
+        )
+
+    nearby_low = candidate("nearby-low", confidence=0.81, distance_m=100)
+    farther_high = candidate("farther-high", confidence=0.99, distance_m=900)
+    missing = candidate("missing", confidence=None, distance_m=10)
+
+    assert sort_candidates([missing, nearby_low, farther_high]) == [
+        farther_high,
+        nearby_low,
+        missing,
+    ]
 
 
 def test_preflight_refuses_existing_without_overwrite(tmp_path: Path) -> None:

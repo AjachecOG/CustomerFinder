@@ -13,12 +13,10 @@ authors = [{ name = "Customer Finder" }]
 dependencies = [
     "typer>=0.15.1,<0.17",
     "pydantic>=2.10.0,<3",
-    "pydantic-settings>=2.7.0,<3",
     "duckdb>=1.1.0,<2",
     "httpx>=0.28.0,<0.29",
     "PyYAML>=6.0.2,<7",
     "rapidfuzz>=3.11.0,<4",
-    "tenacity>=9.0.0,<10",
 ]
 
 [project.optional-dependencies]
@@ -38,7 +36,7 @@ finder = "customer_finder.cli:app"
 where = ["src"]
 
 [tool.setuptools.package-data]
-customer_finder = ["config/*.yml"]
+customer_finder = ["config/*.yml", "static/*"]
 
 [tool.ruff]
 target-version = "py312"
@@ -47,6 +45,9 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/customer_finder/calibration_gui.py" = ["N802"]
 
 [tool.ruff.format]
 quote-style = "double"

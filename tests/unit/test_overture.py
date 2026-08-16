@@ -10,6 +10,7 @@ import respx
 
 from customer_finder.errors import ConfigError, OvertureError
 from customer_finder.overture import (
+    S3_RELEASE_LIST_URL,
     STAC_CATALOG_URL,
     assert_schema_matches_snapshot,
     build_category_sql,
@@ -71,6 +72,31 @@ def test_resolve_latest_falls_back_when_schema_version_null() -> None:
     assert resolved.schema_version == "1.18.0"
     assert resolved.schema_source == "taxonomy_snapshot_fallback"
     assert any("stac_schema_version_missing" in w for w in resolved.warnings)
+
+
+@respx.mock
+def test_resolve_latest_falls_back_to_official_s3_listing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("time.sleep", lambda _seconds: None)
+    respx.get(STAC_CATALOG_URL).mock(return_value=httpx.Response(404))
+    respx.get(S3_RELEASE_LIST_URL).mock(
+        return_value=httpx.Response(
+            200,
+            text="""<?xml version="1.0" encoding="UTF-8"?>
+            <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+              <CommonPrefixes><Prefix>release/2026-07-22.0/</Prefix></CommonPrefixes>
+              <CommonPrefixes><Prefix>release/2026-07-22.10/</Prefix></CommonPrefixes>
+              <CommonPrefixes><Prefix>release/2026-06-17.0/</Prefix></CommonPrefixes>
+            </ListBucketResult>""",
+        )
+    )
+
+    resolved = resolve_release("latest", snapshot_schema_version="1.18.0")
+
+    assert resolved.release_id == "2026-07-22.10"
+    assert resolved.schema_version == "1.18.0"
+    assert resolved.catalog_url == S3_RELEASE_LIST_URL
+    assert resolved.schema_source == "taxonomy_snapshot_fallback"
+    assert any("official public S3 listing" in warning for warning in resolved.warnings)
 
 
 @respx.mock
@@ -219,7 +245,7 @@ def test_resolve_rejects_off_host_stac_child() -> None:
             },
         )
     )
-    with pytest.raises(OvertureError, match="Refusing STAC URL"):
+    with pytest.raises(OvertureError, match="Refusing Overture catalog URL"):
         resolve_release("latest")
 
 

@@ -17,8 +17,6 @@ def maps_search_url(candidate: Candidate) -> str:
     ]
     query = " ".join(part for part in parts if part).strip() or candidate.raw.overture_id
     params: dict[str, str] = {"api": "1", "query": query}
-    if candidate.google_place_id:
-        params["query_place_id"] = candidate.google_place_id
     return "https://www.google.com/maps/search/?" + urlencode(params)
 
 

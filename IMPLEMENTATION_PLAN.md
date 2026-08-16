@@ -1,10 +1,13 @@
 # Customer Finder — plan implementacji MVP v1
 
-Status dokumentu: gotowy do wykonania  
+Status dokumentu: zrealizowany dla v0.1.0
 Docelowy wykonawca: autonomiczny agent programistyczny o ograniczonej zdolności podejmowania decyzji  
 Język implementacji: Python 3.12  
 Główny system operacyjny użytkownika: Windows / PowerShell  
-Środowiska uruchomieniowe: lokalnie, Docker, agent chmurowy po sklonowaniu repozytorium
+Środowiska uruchomieniowe: natywny Windows / PowerShell oraz agent chmurowy po sklonowaniu repozytorium
+
+Decyzja zakresu z 2026-08-15: wydanie v0.1.0 jest produktem Overture-only i nie
+korzysta z Google Places API ani innego płatnego API enrichmentu.
 
 ## 1. Cel i definicja produktu
 
@@ -18,11 +21,16 @@ finder search `
   --lon 17.0385 `
   --radius-km 3 `
   --categories cafe,bakery,pastry,ice_cream `
-  --enrich none `
   --output out/leads_wroclaw.csv
 ```
 
-Podstawowym źródłem danych jest Overture Maps Places. Opcjonalne sprawdzenie Google korzysta wyłącznie z oficjalnego Places API (New). Playwright, scrapowanie Google Maps, rozszerzenie Chrome, automatyczna wysyłka ofert, panel WWW i PostgreSQL nie należą do MVP v1.
+Jedynym automatycznie odpytywanym źródłem danych w MVP v1 jest Overture Maps
+Places. Produkt nie wymaga klucza Google, nie wywołuje Google Places API i nie
+automatyzuje Google Maps. Do ręcznej kontroli generuje zwykłe linki Maps, które
+użytkownik może sam otworzyć w przeglądarce. Playwright, scrapowanie Google Maps,
+rozszerzenie Chrome, automatyczna wysyłka ofert, publiczny panel WWW i PostgreSQL
+nie należą do runtime MVP v1. Lokalny review desk kalibracji jest narzędziem
+deweloperskim i nie pobiera danych z Maps.
 
 Narzędzie nie może twierdzić, że udowodniło nieistnienie strony. Poprawna interpretacja wyniku `likely_no_site` brzmi: „w użytych źródłach nie znaleziono własnej domeny”.
 
@@ -38,9 +46,11 @@ Agent wykonujący plan nie może zmieniać poniższych decyzji bez wyraźnej zgo
    `spatial` wolno użyć wyłącznie do `ST_X/ST_Y` przy ekstrakcji punktu z geometrii;
    nie używać `ST_Distance` na długości i szerokości geograficznej.
 6. Najpierw filtr bounding box w DuckDB, potem dokładny filtr promienia w Pythonie.
-7. Overture jest źródłem trwałego CSV. Surowe pola Google nie są zapisywane w CSV; domyślnie można przechować jedynie `place_id` oraz ręczną decyzję użytkownika.
-8. Google enrichment jest opcjonalny, domyślnie wyłączony i używa Text Search (New), nie Legacy Find Place i nie Playwrighta.
-9. Brak klucza Google przy `--enrich google` jest błędem konfiguracji. Program nie może po cichu przełączyć się na inny tryb.
+7. Overture jest jedynym automatycznym źródłem trwałego CSV w MVP v1.
+8. Standardowe uruchomienie nie wymaga żadnego komercyjnego klucza API i nie
+   wykonuje żądań do Google Places API.
+9. Linki Google Maps służą wyłącznie do ręcznej kontroli inicjowanej przez
+   użytkownika. Aplikacja nie pobiera, nie parsuje ani nie przechowuje treści Maps.
 10. Pole `brand` ani niski `confidence` nie powodują automatycznego usunięcia rekordu. Wpływają na scoring lub bucket `unknown`.
 11. Każdy rekord zachowuje identyfikator Overture, wersję wydania oraz informacje o źródłach i licencjach.
 12. Każde uruchomienie `search`, które przeszło parsowanie CLI i ma poprawnie
@@ -63,9 +73,9 @@ Agent wykonujący plan nie może zmieniać poniższych decyzji bez wyraźnej zgo
 - deterministyczny scoring bez AI;
 - buckety `has_owned_site`, `social_only`, `aggregator_only`, `likely_no_site`, `unknown`;
 - CSV, manifest JSON i plik linków do ręcznej weryfikacji;
-- opcjonalny Google Places Text Search z limitem kosztowym;
+- lokalny review desk do ręcznej kalibracji, bez pobierania treści Google Maps;
 - testy jednostkowe, integracyjne na fixtures i opcjonalne smoke testy sieciowe;
-- Docker i instrukcja PowerShell.
+- natywna instalacja Python 3.12 i instrukcja PowerShell.
 
 ### 3.2 Poza zakresem
 
@@ -74,7 +84,8 @@ Agent wykonujący plan nie może zmieniać poniższych decyzji bez wyraźnej zgo
 - przeglądarkowe scrapowanie map;
 - oceny i recenzje Google;
 - automatyczne wysyłanie e-maili, SMS-ów lub wykonywanie połączeń;
-- CRM, panel WWW, konta użytkowników;
+- CRM, publiczny panel WWW, konta użytkowników;
+- Google Places API i inne płatne API enrichmentu;
 - cykliczne zadania i harmonogram;
 - trenowanie modelu ML lub używanie LLM do klasyfikacji;
 - samodzielne geokodowanie tekstowego adresu w v1.
@@ -85,9 +96,7 @@ Agent ma utworzyć dokładnie tę strukturę. Nie dodawać nowych warstw typu `s
 
 ```text
 CustomerFinder/
-├── .env.example
 ├── .gitignore
-├── Dockerfile
 ├── README.md
 ├── IMPLEMENTATION_PLAN.md
 ├── pyproject.toml
@@ -104,8 +113,8 @@ CustomerFinder/
 │       ├── deduplicate.py
 │       ├── classify.py
 │       ├── scoring.py
-│       ├── google_places.py
 │       ├── calibration.py
+│       ├── calibration_gui.py
 │       ├── verify_links.py
 │       ├── output.py
 │       ├── pipeline.py
@@ -117,8 +126,6 @@ CustomerFinder/
 ├── tests/
 │   ├── fixtures/
 │   │   ├── overture_places.parquet
-│   │   ├── google_text_search_match.json
-│   │   ├── google_text_search_ambiguous.json
 │   │   ├── expected_leads.csv
 │   │   └── calibration_reviewed.csv
 │   ├── unit/
@@ -130,7 +137,7 @@ CustomerFinder/
 
 `out/*` musi być ignorowane przez Git z wyjątkiem `.gitkeep`. Konfiguracje wbudowane
 ładować przez `importlib.resources`, dzięki czemu działają po instalacji wheel i w
-Dockerze. Opcjonalne `--config-dir PATH` nadpisuje cały zestaw czterech plików YAML;
+czystym virtualenv. Opcjonalne `--config-dir PATH` nadpisuje cały zestaw czterech plików YAML;
 brak któregokolwiek pliku w podanym katalogu jest błędem konfiguracji, bez mieszania
 plików wbudowanych i użytkownika.
 
@@ -141,12 +148,11 @@ W `pyproject.toml` należy przypiąć kompatybilne zakresy wersji, nie używać 
 Zależności runtime:
 
 - `typer` — CLI;
-- `pydantic` i `pydantic-settings` — modele i konfiguracja;
+- `pydantic` — modele i walidacja;
 - `duckdb` — odczyt GeoParquet;
-- `httpx` — STAC i Google API;
+- `httpx` — STAC Overture;
 - `PyYAML` — konfiguracja kategorii i reguł;
-- `rapidfuzz` — podobieństwo nazw podczas deduplikacji i dopasowania Google;
-- `tenacity` — kontrolowane retry zapytań HTTP.
+- `rapidfuzz` — podobieństwo nazw podczas deduplikacji.
 
 Zależności developerskie:
 
@@ -168,14 +174,11 @@ lat: float                   zakres MVP dla Polski: 48.8..55.1
 lon: float                   zakres MVP dla Polski: 13.8..24.5
 radius_km: float             > 0 i <= 10 dla MVP
 categories: list[str]        minimum 1, aliasy z categories.yml
-enrich: Literal["none", "google"]
 output_path: Path
 min_score: int               0..100, domyślnie 0
 top: int | None              > 0, opcjonalnie ogranicza wynik końcowy
 include_has_site: bool       domyślnie false
 overture_release: str        domyślnie "latest"
-google_max_requests: int     0..200, domyślnie 50
-strict: bool                 domyślnie false
 config_dir: Path | None      opcjonalny kompletny zestaw konfiguracji
 overwrite: bool              domyślnie false
 ```
@@ -250,11 +253,9 @@ chain_reason: str | None
 bucket: CandidateBucket
 score: int
 score_reasons: list[str]
-google_place_id: str | None
 ```
 
-`GoogleMatchResult` jest dołączany tylko do obiektu wyniku sesji, nie do
-serializowanego `Candidate`.
+MVP v1 nie dołącza do kandydata wyniku zewnętrznego dopasowania encji.
 
 ### 6.5 `CandidateBucket`
 
@@ -290,21 +291,11 @@ Dla `site_status` obowiązuje priorytet: jeśli istnieje własna domena, wybrać
 `owned_site` nawet gdy są też sociale; `social_only` oznacza sociale i brak własnej
 domeny; `no_owned_site` oznacza brak znalezionej własnej domeny i brak sociali.
 
-### 6.7 `GoogleMatchResult`
+### 6.7 Zewnętrzne dopasowanie encji
 
-Model wyłącznie sesyjny:
-
-```text
-status: Literal["matched", "not_found", "ambiguous", "error", "skipped_budget"]
-place_id: str | None
-website_kind: Literal["owned", "social", "aggregator", "none", "unknown"]
-name_similarity: float | None
-address_similarity: float | None
-match_distance_m: int | None
-warning: str | None
-```
-
-Nie umieszczać w tym modelu ratingów ani recenzji. Surowa odpowiedź Google nie może być logowana ani zapisywana jako fixture podczas produkcyjnego uruchomienia.
+MVP v1 nie definiuje modelu wyniku zewnętrznego dopasowania. Ewentualny model
+dla płatnego API powstanie dopiero w osobnym planie post-v1, po wyborze dostawcy,
+sprawdzeniu kosztów, retencji i warunków korzystania.
 
 ## 7. Konfiguracja kategorii
 
@@ -438,9 +429,11 @@ Dla `overture_release=latest` pobrać
 zwalidować je wyrażeniem `^\d{4}-\d{2}-\d{2}\.\d+$` i potwierdzić istnienie
 odpowiedniego linku `rel=child`. Rozwiązać względny `href` względem URL katalogu,
 pobrać katalog dziecka i odczytać jego `schema:version`; zaakceptować zapis z
-opcjonalnym początkowym `v`, ale przed porównaniem znormalizować do `X.Y.Z`. Brak pola jest błędem
-schematu, nie `None`. Dla jawnego wydania również znaleźć jego child link, aby
-poznać wersję schematu. Następnie zbudować ścieżkę
+opcjonalnym początkowym `v`, ale przed porównaniem znormalizować do `X.Y.Z`.
+Jeśli oficjalny katalog dziecka zwraca brak lub `null`, użyć wersji z
+`taxonomy_snapshot.yml` z jawnym ostrzeżeniem i nadal wykonać kontrolę wymaganych
+kolumn GeoParquet. Dla jawnego wydania również znaleźć jego child link, aby poznać
+wersję schematu. Następnie zbudować ścieżkę
 `s3://overturemaps-us-west-2/release/<release>/theme=places/type=place/*`.
 Nie korzystać z dawnych `overture_releases.yaml`, `releases.json` ani
 `registry-manifest.json`.
@@ -449,8 +442,19 @@ Jeśli STAC jest niedostępny:
 
 - wykonać łącznie maksymalnie 3 próby; czekać 1 s przed drugą i 2 s przed trzecią;
 - nie używać przypadkowego starego wydania;
+- dla `latest` odczytać retencjonowane wydania z oficjalnej publicznej listy S3
+  `https://overturemaps-us-west-2.s3.us-west-2.amazonaws.com/?list-type=2&delimiter=%2F&prefix=release%2F`,
+  zaakceptować wyłącznie prefiksy zgodne z `release/YYYY-MM-DD.N/`, wybrać
+  najnowszą datę i najwyższą numeryczną rewizję, a wersję schematu wziąć ze
+  snapshotu z jawnym ostrzeżeniem w manifeście;
 - jeśli użytkownik podał jawne wydanie, można użyć go bez STAC;
-- zakończyć kodem błędu 4 z komunikatem zawierającym etap, URL i zalecenie użycia `--overture-release`.
+- jeśli również oficjalna lista S3 jest niedostępna lub niepoprawna, zakończyć
+  kodem błędu 4 z komunikatem zawierającym etap, URL i zalecenie użycia
+  `--overture-release`.
+
+Fallback S3 został dodany po live checku 2026-08-15, gdy udokumentowany endpoint
+STAC zwracał HTTP 404, a publiczny bucket poprawnie publikował wydania
+`2026-06-17.0` oraz `2026-07-22.0`.
 
 Jeżeli jawnie wskazane stare wydanie nie jest już dostępne, zakończyć kodem 4 i
 nie przełączać się na `latest`.
@@ -658,132 +662,35 @@ brak nazwy                                 -40
 
 Wynik obciąć do zakresu 0..100. Każda zmiana wyniku dopisuje czytelny kod do `score_reasons`, np. `category:pastry:+25`, `social_only:+22`, `chain:-30`.
 
-Nie modyfikować score na podstawie ocen Google.
+Nie modyfikować score na podstawie ręcznych ocen kalibracyjnych.
 
-## 13. Google Places enrichment
+## 13. Weryfikacja bez API
 
-Ten moduł powstaje dopiero po ukończeniu i ręcznej kalibracji pipeline’u Overture.
+MVP v1 nie zawiera automatycznego enrichmentu. Pipeline nie odczytuje klucza
+Google, nie wysyła zapytań do Google Places API i nie potrzebuje konta billingowego.
 
-### 13.1 Konfiguracja
+### 13.1 Granica runtime
 
-Klucz jest pobierany wyłącznie z `GOOGLE_MAPS_API_KEY`. `.env.example` zawiera nazwę zmiennej z pustą wartością. `.env` znajduje się w `.gitignore`.
+- automatyczne żądania sieciowe produktu są ograniczone do źródeł Overture i
+  infrastruktury potrzebnej DuckDB do odczytu tych danych;
+- nie pobierać ani nie parsować stron Google Maps, wyników wyszukiwarki ani innych
+  nieprzeznaczonych do tego interfejsów;
+- nie implementować ukrytego fallbacku na Playwright, Selenium ani scraping;
+- istniejący eksperymentalny kod Google nie należy do wspieranego przepływu v1 i
+  przed release ma zostać usunięty z publicznego CLI albo jednoznacznie wyłączony.
 
-Przed pierwszym zapytaniem:
+### 13.2 Ręczna kontrola
 
-- sprawdzić obecność klucza;
-- sprawdzić `google_max_requests > 0`;
-- policzyć kandydatów przeznaczonych do enrichment;
-- jeśli kandydatów jest więcej niż budżet, wybrać najwyższy score i pozostałym nadać sesyjny status `skipped_budget`;
-- budżet oznacza wszystkie fizyczne próby HTTP, włącznie z retry, a nie liczbę
-  kandydatów. Współdzielony licznik prób musi być zwiększany atomowo przed wysłaniem
-  requestu; po osiągnięciu limitu żadna współbieżna praca nie może wysłać kolejnego.
+Program generuje tekstowy URL Maps z nazwy i adresu. Użytkownik sam otwiera link,
+sprawdza wizytówkę i zapisuje pięć pól `CalibrationReview` w lokalnym review desk.
+Aplikacja przechowuje wyłącznie werdykt użytkownika i notatkę; nie kopiuje pól
+Maps do głównego CSV i nie udaje automatycznej walidacji.
 
-`google_max_requests` jest bezpiecznikiem liczby żądań, nie gwarancją konkretnej
-kwoty. `websiteUri` może wpływać na SKU i koszt zgodnie z aktualnym cennikiem;
-README ma o tym ostrzegać i linkować oficjalny kalkulator/cennik.
+### 13.3 Warunek ponownego rozważenia API
 
-### 13.2 Żądanie
-
-Użyć `POST https://places.googleapis.com/v1/places:searchText`.
-
-Zapytanie tekstowe:
-
-```text
-{name}, {address_freeform}, {locality}
-```
-
-Body zawiera `textQuery`, `languageCode="pl"`, `regionCode="PL"`, `pageSize=3`
-oraz `locationBias.circle` ze środkiem w punkcie kandydata i promieniem 250 m.
-Nie dodawać nazwy kraju do tekstu, bo jawna lokalizacja w zapytaniu może osłabić
-bias. Nagłówki to `Content-Type: application/json`, `X-Goog-Api-Key` i
-`X-Goog-FieldMask`; maska jest jednym ciągiem bez spacji:
-
-```text
-places.id,
-places.displayName,
-places.formattedAddress,
-places.websiteUri,
-places.location
-```
-
-Nie wykonywać osobnego Place Details, jeśli Text Search zwrócił te pola.
-
-### 13.3 Dopasowanie encji
-
-Google nie może automatycznie nadpisać kandydata tylko dlatego, że zwrócił pierwszy wynik.
-
-Obliczyć:
-
-- `name_similarity` przez RapidFuzz po identycznej normalizacji nazwy;
-- `address_similarity` jako Jaccard znormalizowanych tokenów ulicy, locality i
-  kodu pocztowego, po usunięciu przecinków i różnic wielkości liter;
-- odległość haversine między współrzędnymi Overture i `places.location`;
-- numer budynku wyodrębniony prostą regułą tokenową; jeśli obie strony mają numer
-  i numery się różnią, wynik odrzucić. Nie próbować rozumieć złożonych lokali.
-
-Za `matched` uznać wynik tylko, gdy:
-
-- `name_similarity >= 88`;
-- `address_similarity >= 50`;
-- odległość `<= 250 m`;
-- numery budynków nie są sprzeczne;
-- dokładnie jeden wynik spełnia wszystkie powyższe warunki.
-
-Po odrzuceniu surowych wyników niespełniających progów: zero kwalifikujących się
-wyników → `not_found`, dokładnie jeden → `matched`, więcej niż jeden →
-`ambiguous`. Sama liczba surowych elementów `places` nie wyznacza statusu. Błąd
-API → `error`. Nie zgadywać.
-
-`website_kind` obliczyć w pamięci regułami z sekcji 8 na pojedynczym
-`websiteUri`: poprawny publiczny host spoza list → `owned`, social → `social`,
-agregator → `aggregator`, brak pola/pusta wartość → `none`, niepoprawna lub
-ignorowana wartość → `unknown`. Nie wykonywać żądania do URL.
-
-### 13.4 Retry i limity
-
-- 429 i 5xx: łącznie maksymalnie 3 próby, exponential backoff z jitterem;
-- 401/403: bez retry, zatrzymać nowe requesty; błąd konfiguracji, kod 3;
-- 400: bez retry, zatrzymać nowe requesty; błąd kontraktu/implementacji, kod 3;
-- timeout connect 5 s, read 15 s;
-- maksymalna współbieżność 3;
-- osobno liczyć `logical_candidates` i `http_attempts`; budżet dotyczy `http_attempts`;
-- nigdy nie przekraczać `google_max_requests`.
-
-401, 403 i 400 są błędami fatalnymi niezależnie od `strict`, bo oznaczają błędny
-klucz/uprawnienia albo kontrakt requestu. `strict` dotyczy wyłącznie timeoutów,
-429 i 5xx poszczególnych kandydatów. Jeśli taka część enrichment zakończy się błędem:
-
-- `strict=false`: utworzyć wynik Overture, dodać ostrzeżenie i statusy sesyjne;
-- `strict=true`: nie publikować finalnego CSV i zakończyć kodem 5.
-
-### 13.5 Przechowywanie
-
-Domyślny tryb produkcyjny:
-
-- można zapisać `google_place_id`;
-- nie zapisywać surowej nazwy, adresu, `websiteUri`, `googleMapsUri`, ratingów ani odpowiedzi JSON;
-- wynik Google **nie zmienia** trwałego `bucket`, `score` ani pól kalibracji;
-- w CSV może zmienić się wyłącznie `google_place_id` dla jednoznacznego matchu;
-- CLI pokazuje tylko agregaty operacyjne (`matched`, `ambiguous`, `not_found`,
-  `errors`, `skipped_budget`). Nie wyświetla ani nie zapisuje per-rekordowego
-  `website_kind`, podobieństw, nazwy, adresu ani URL Google;
-- oceny kalibracyjne pochodzą od użytkownika, nie z automatycznego kopiowania
-  danych Google, i istnieją wyłącznie w osobnym `calibration.csv`; ponowne
-  wyszukiwanie ich nie importuje.
-
-To jest świadoma decyzja v1: trwały efekt Google na pojedynczym rekordzie to tylko
-dozwolony do przechowania Place ID i precyzyjniejszy link ręcznej weryfikacji.
-`website_kind` istnieje w pamięci wyłącznie do agregatów bieżącego procesu. Jeśli
-w przyszłości powstanie UI pokazujące dane Google, będzie osobnym milestone’em po
-ponownej kontroli Places Policies, warunków EEA i wymagań atrybucji. Nie dodawać
-raportu HTML/CSV jako „ułatwienia”.
-
-Wynik sesyjny istnieje wyłącznie po to, by wskazać rekordy do ręcznej kontroli.
-`place_id` starszy niż 12 miesięcy traktować jako wymagający odświeżenia przed
-użyciem. Pipeline nie scala jeszcze werdyktów pomiędzy kolejnymi wyszukiwaniami;
-do kalibracji służy osobny, jawny przepływ z sekcji 15.4.
-
-Jeśli właściciel projektu chce trwale zapisywać dodatkowe pola Google, musi najpierw jawnie zmienić tę decyzję po sprawdzeniu aktualnych warunków korzystania. Agent nie może sam rozszerzyć retencji.
+Integracja z płatnym API może wrócić wyłącznie jako osobny projekt post-v1 po
+pisemnym określeniu dostawcy, kosztu, budżetu, retencji, warunków licencyjnych i
+wartości biznesowej. Nie jest warunkiem wydania v0.1.0.
 
 ## 14. Linki do ręcznej weryfikacji
 
@@ -793,9 +700,8 @@ Dla każdego wyniku końcowego wygenerować URL:
 https://www.google.com/maps/search/?api=1&query=<urlencoded name address locality>
 ```
 
-Jeżeli istnieje `google_place_id`, dodać `&query_place_id=<urlencoded place_id>`;
-parametr `query` nadal jest wymagany jako tekst awaryjny. URL budować przez
-`urllib.parse.urlencode`, nie przez ręczne sklejanie.
+URL budować przez `urllib.parse.urlencode`, nie przez ręczne sklejanie. Produkt
+nie pobiera zawartości linku i nie dodaje identyfikatora z zewnętrznego API.
 
 `<stem>.verify_links.txt` zawiera maksymalnie `top` albo domyślnie 30 linków, w kolejności malejącego score. Format każdej sekcji:
 
@@ -837,7 +743,6 @@ is_chain
 chain_reason
 confidence
 operating_status
-google_place_id
 source_refs
 ```
 
@@ -855,8 +760,9 @@ formułą. Dodać test dla wszystkich czterech prefiksów i round-trip JSON.
 Sortowanie:
 
 1. score malejąco;
-2. distance_m rosnąco;
-3. name rosnąco.
+2. pełne `confidence` malejąco, brak wartości na końcu;
+3. distance_m rosnąco;
+4. name rosnąco.
 
 ### 15.2 Manifest
 
@@ -873,8 +779,6 @@ overture_release
 counts: raw_category_bbox, inside_radius, permanently_closed,
         deduplicated, has_owned_site, social_only, aggregator_only,
         likely_no_site, unknown, output
-google: enabled, request_budget, logical_candidates, http_attempts, matched, ambiguous,
-        not_found, errors, skipped_budget
 warnings
 tool_version
 python_version
@@ -956,28 +860,20 @@ wrong_ratio = count(entity_status=wrong_entity OR target_category=no) / reviewed
 JSON zawiera liczniki, wzory, progi, `passed` i SHA-256 ocenianego CSV. Jeżeli
 progi Milestone 5 są spełnione, dodatkowo powstaje
 `<stem>.approved.json` (domyślnie `out/calibration.approved.json`) z hashami CSV i
-summary. Tylko ten artefakt odblokowuje
-Milestone 6; zmiana CSV unieważnia zgodność hasha.
+summary. Tylko ten artefakt odblokowuje Milestone 6 i release hardening; zmiana
+CSV unieważnia zgodność hasha.
 
-### 15.5 Kalibracja dopasowania Google
+### 15.5 Kontrola linków ręcznej weryfikacji
 
-Po smoke Google uruchomić:
+Po wygenerowaniu wyników sprawdzić mechanicznie, że linki:
 
-```text
-finder google-calibration prepare --leads out/leads.csv --output out/google-match-review.csv --limit 10
-finder google-calibration evaluate --file out/google-match-review.csv --output out/google-match-review.summary.json
-```
+- zawierają nazwę, adres i locality po poprawnym URL-encoding;
+- działają bez klucza API;
+- nie powodują żadnego requestu z backendu Customer Finder;
+- mogą zostać otwarte wyłącznie z jawnej akcji użytkownika.
 
-`prepare` wybiera pierwsze 10 rekordów z niepustym `google_place_id` i tworzy
-`rank,overture_id,name,google_maps_url,google_place_id,same_entity,notes`, gdzie
-`same_entity` przyjmuje `yes`, `no` albo `uncertain`. Człowiek otwiera link i
-ocenia tożsamość; agent nie wypełnia pola. `evaluate` wymaga 10 pełnych ocen,
-odrzuca duplikaty oraz `uncertain` jako niespełniające bramki i liczy
-`entity_match_precision = yes / reviewed`. Przy wartości `1.0` tworzy
-`<stem>.approved.json` (domyślnie `google-match-review.approved.json`) z SHA-256
-CSV i summary. Zmiana któregokolwiek
-pliku unieważnia approval. Jeżeli jest mniej niż 10 jednoznacznych matchów, bramka
-nie przechodzi; nie uzupełniać próbki rekordami `ambiguous` ani duplikatami.
+Ocena encji odbywa się w tych samych pięciu polach `CalibrationReview`; nie ma
+osobnego `google-calibration` ani bramki 10/10 dopasowań API.
 
 ## 16. CLI i kody wyjścia
 
@@ -994,22 +890,20 @@ finder config validate
 finder overture schema --release latest
 finder calibration prepare [OPTIONS]
 finder calibration evaluate [OPTIONS]
-finder google-calibration prepare [OPTIONS]
-finder google-calibration evaluate [OPTIONS]
+finder calibration gui [OPTIONS]
 finder version
 ```
 
 Kody wyjścia:
 
-- `0` — sukces, także pusty wynik i sukces częściowy Google przy `strict=false`;
+- `0` — sukces, także pusty wynik;
 - `1` — nieoczekiwany błąd programu; wypisać `run_id`, bez stack trace domyślnie;
 - `2` — niepoprawne argumenty;
-- `3` — błędna konfiguracja, YAML lub brak klucza;
+- `3` — błędna konfiguracja lub YAML;
 - `4` — błąd Overture/STAC/DuckDB;
-- `5` — wymagany Google enrichment nie zakończył się poprawnie w `strict=true`;
 - `6` — błąd zapisu wyniku.
 
-CLI ma wypisać krótkie podsumowanie, a pełne szczegóły umieścić w manifeście. Nigdy nie wypisywać klucza API.
+CLI ma wypisać krótkie podsumowanie, a pełne szczegóły umieścić w manifeście.
 
 Pusty wynik jest poprawnym zestawem: CSV zawiera sam nagłówek, manifest liczniki
 zerowe, `<stem>.verify_links.txt` jest pusty, marker `.complete` istnieje, a CLI wypisuje
@@ -1042,11 +936,9 @@ prawdopodobną niezgodność taksonomii.
 17. Usunięcie `has_owned_site`, chyba że flaga pozwala.
 18. Filtr `min_score`.
 19. Sortowanie i opcjonalne `top`.
-20. Opcjonalny Google enrichment tylko dla bieżącej listy; nie przelicza bucketu
-    ani score, tworzy jedynie wynik sesyjny i opcjonalny `google_place_id`.
-21. Wygenerowanie linków weryfikacyjnych.
-22. Atomowy zapis całego zestawu oraz markera `.complete`.
-23. Podsumowanie CLI.
+20. Wygenerowanie linków weryfikacyjnych.
+21. Atomowy zapis całego zestawu oraz markera `.complete`.
+22. Podsumowanie CLI.
 
 Każdy etap zwraca wynik i statystyki. Nie używać globalnego stanu.
 
@@ -1074,7 +966,8 @@ Minimalny zestaw:
 - `deduplicate`: ID, telefon, nazwa+odległość oraz przypadki niededuplikowane;
 - `chain detection`: denylista i trzy placówki;
 - `config`: poprawny i błędny YAML;
-- `Google matching`: matched, ambiguous, not_found;
+- `verify links`: poprawne URL-encoding nazwy, adresu i locality;
+- `calibration GUI`: ręczny zapis pięciu pól i brak backendowego pobierania Maps;
 - `output`: kolejność kolumn, JSON w komórkach, ochrona przed formułami, UTF-8 BOM,
   odmowa nadpisania i poprawny marker kompletności.
 
@@ -1096,24 +989,26 @@ Fixture Parquet zawiera co najmniej 24 rekordy, w tym:
 
 Pozostałe rekordy mają zapewnić co najmniej 20 wierszy do deterministycznej
 kalibracji fixture, kilka remisów score oraz spójną składową deduplikacji długości
-3. Fixture nie może pochodzić z produkcyjnej odpowiedzi Google.
+3. Fixture nie może pochodzić z Google Maps ani innego źródła wymagającego
+komercyjnego klucza API.
 
 Test pełnego pipeline’u porównuje CSV z `expected_leads.csv` i sprawdza wszystkie liczniki manifestu.
 
-Google API mockować przez `respx`; sprawdzić retry, budżet, timeout i brak klucza.
+Test ma potwierdzić, że standardowy pipeline nie odczytuje
+`GOOGLE_MAPS_API_KEY` i nie wykonuje żądań do hostów Google.
 
 ### 19.3 Smoke z siecią
 
 Smoke testy nie działają domyślnie w zwykłym CI. Offline unit i integration są
 obowiązkowe zawsze. Smoke Overture jest obowiązkowy ręcznie przed Milestone 5 i
-release; smoke Google przed ukończeniem Milestone 6. Włączenie:
+release. Nie istnieje smoke Google w MVP v1. Włączenie:
 
 ```powershell
 $env:RUN_NETWORK_TESTS='1'
 pytest -m network
 ```
 
-Smoke Overture: promień 0.5 km i jedna kategoria, maksymalnie 20 wyświetlonych rekordów. Test Google wymaga osobnej flagi i limitu 1 zapytania.
+Smoke Overture: promień 0.5 km i jedna kategoria, maksymalnie 20 wyświetlonych rekordów.
 
 ### 19.4 Bramka jakości
 
@@ -1128,30 +1023,27 @@ pytest -q --cov=customer_finder --cov-report=term-missing
 
 Minimalne pokrycie: 85% dla całego pakietu. Nie wyłączać testów lub reguł lintera tylko po to, aby bramka przeszła. Każde wyłączenie wymaga komentarza z powodem.
 
-## 20. Docker
+## 20. Natywne środowisko Windows
 
-Dockerfile wieloetapowy nie jest wymagany. Ważniejsza jest przewidywalność:
+Wspieranym runtime v0.1.0 jest Python 3.12 uruchamiany bezpośrednio w Windows.
+Docker, WSL i Node.js nie są wymagane. Projekt, interpreter oraz virtualenv mogą
+znajdować się na dysku innym niż systemowy.
 
-- obraz bazowy `python:3.12-slim`;
-- użytkownik nie-root;
-- instalacja pakietu z `pyproject.toml`;
-- rozszerzenia DuckDB `httpfs` i `spatial` przygotowane podczas budowania albo jawnie sprawdzane przy starcie;
-- `/app/out` jako zapisywalny katalog;
-- `ENTRYPOINT ["finder"]`.
-
-Przykład:
+Minimalna bramka środowiskowa:
 
 ```powershell
-docker build -t customer-finder .
-docker run --rm `
-  -v "${PWD}/out:/app/out" `
-  customer-finder search `
-  --lat 51.1079 --lon 17.0385 --radius-km 3 `
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install .
+finder config validate
+finder search --lat 51.1079 --lon 17.0385 --radius-km 3 `
   --categories cafe,bakery,pastry,ice_cream `
-  --output /app/out/leads.csv
+  --overture-release fixture `
+  --parquet tests/fixtures/overture_places.parquet `
+  --output out/leads_fixture.csv
 ```
 
-Dla Google przekazać sekret przez `--env-file .env`, nie przez argument widoczny w historii poleceń.
+Instalacja i wyszukiwanie nie wymagają `.env` ani sekretu komercyjnego API.
 
 ## 21. Etapy implementacji i bramki
 
@@ -1162,7 +1054,7 @@ Agent ma realizować etapy sekwencyjnie. Po każdym etapie zaktualizować checkl
 Zadania:
 
 1. Zainicjalizować strukturę plików.
-2. Utworzyć `pyproject.toml`, `.gitignore`, `.env.example`.
+2. Utworzyć `pyproject.toml` i `.gitignore`.
 3. Dodać minimalne `finder version`.
 4. Dodać konfigurację Ruff, mypy i pytest.
 5. Utworzyć test uruchomienia CLI.
@@ -1228,7 +1120,7 @@ Zadania:
 2. CSV, manifest, atomowy zapis.
 3. `<stem>.verify_links.txt`.
 4. Kody wyjścia.
-5. README z jedną komendą lokalną i Docker.
+5. README z natywną instalacją Windows i jedną komendą wyszukiwania.
 
 Bramka:
 
@@ -1253,13 +1145,14 @@ Bramka:
 
 - co najmniej 80% top 20 to działające, niezależne lokale z docelowych kategorii;
 - co najmniej 70% top 20 nie ma własnej domeny według ręcznej kontroli;
-- przebieg bez Google trwa <= 5 min na typowym łączu, poza pierwszym pobraniem rozszerzeń/cache;
+- przebieg Overture trwa <= 5 min na typowym łączu, poza pierwszym pobraniem rozszerzeń/cache;
 - wszystkie błędne klasyfikacje są opisane przed zmianą reguł.
 - `out/calibration.approved.json` istnieje i jego hash odpowiada ocenionemu CSV.
 
-Jeśli bramka nie przechodzi, nie implementować Google. Najpierw poprawić Overture, mapowanie kategorii, deduplikację lub scoring.
+Jeśli bramka nie przechodzi, nie rozpoczynać release hardening. Najpierw poprawić
+Overture, mapowanie kategorii, deduplikację lub scoring.
 
-### Milestone 6 — Google enrichment
+### Milestone 6 — tryb bez API i release hardening
 
 Warunek wejścia: istnieje poprawny `calibration.approved.json`, a jego SHA-256
 zgadza się z bieżącym `calibration.csv`. W przeciwnym razie agent zatrzymuje ten
@@ -1267,30 +1160,28 @@ milestone i wraca do Milestone 5.
 
 Zadania:
 
-1. Klient Text Search (New).
-2. Budżet i retry.
-3. Dopasowanie encji.
-4. Sesyjna klasyfikacja website kind.
-5. Przechowywanie wyłącznie dozwolonych pól zgodnie z sekcją 13.5.
-6. Mockowane testy i pojedynczy smoke.
+1. Usunąć z publicznego przepływu CLI `--enrich google`, budżet Google i wymóg klucza.
+2. Wyłączyć lub usunąć kod produkcyjny, który mógłby wysłać żądanie do Google Places API.
+3. Zachować generowanie zwykłych linków do ręcznej weryfikacji oraz lokalny review desk.
+4. Dodać test potwierdzający brak backendowych requestów do Google w standardowym przebiegu.
+5. Zaktualizować README, usunąć zbędne `.env.example`, poprawić help CLI i manifest.
+6. Wykonać pełne testy offline i jeden smoke Overture na przypiętym wydaniu.
 
 Bramka:
 
-- jedno zapytanie na kandydata, bez Details;
-- nigdy nie przekracza budżetu;
-- ambiguous nie jest uznawane za match;
-- brak klucza kończy się kodem 3;
-- 10 ręcznie sprawdzonych dopasowań ma 100% poprawności encji; jeśli nie, podnieść progi, nie zgadywać;
-- `google-match-review.approved.json` istnieje i ma hash zgodny z plikiem 10 ocen;
-- surowe odpowiedzi Google nie pojawiają się w `out/`, logach ani manifeście.
-- Google nie zmienia trwałego bucketu ani score; nie powstaje raport zawierający
-  per-rekordowe pola Google inne niż Place ID w CSV.
+- `finder search` działa bez `.env` i bez jakiegokolwiek komercyjnego klucza API;
+- standardowy przebieg nie wysyła żądań do hostów Google;
+- CSV i manifest nie zawierają `google_place_id` ani agregatów Google;
+- ręczne linki Maps i review desk działają, ale backend nie pobiera ich treści;
+- smoke Overture oraz pełna bramka jakości przechodzą;
+- ważny `out/calibration.approved.json` nadal odpowiada zatwierdzonej kalibracji M5.
 
 ### Milestone 7 — finalna dokumentacja i release v0.1.0
 
 Zadania:
 
-1. Pełny README: instalacja, Docker, komendy, koszt Google, interpretacja bucketów, ograniczenia.
+1. Pełny README: instalacja Windows, komendy, tryb bez API, ręczna weryfikacja,
+   interpretacja bucketów i ograniczenia.
 2. `CHANGELOG.md`.
 3. Licencje i atrybucje źródeł.
 4. Test instalacji w nowym katalogu/virtualenv.
@@ -1330,27 +1221,19 @@ Program nie może zwrócić sukcesu bez ostrzeżenia, jeśli surowy bbox ma wyni
 2. Nie obniżać globalnie progu confidence przed poznaniem etapu utraty.
 3. Niski confidence powinien prowadzić do `unknown`, nie do cichego usunięcia.
 
-### Problem: błędny match Google
+### Problem: link ręcznej weryfikacji otwiera zły obiekt
 
-1. Natychmiast oznaczyć jako `ambiguous`.
-2. Dodać zanonimizowany fixture struktury odpowiedzi.
-3. Sprawdzić normalizację nazwy i adresu.
-4. Podnieść progi albo wymagać ręcznej kontroli.
-5. Nigdy nie wybierać „najbliższego” słabego wyniku tylko po to, aby uniknąć `unknown`.
-
-### Problem: 429 lub koszty Google
-
-1. Przerwać dalsze nowe zapytania po osiągnięciu budżetu.
-2. Retry tylko według reguł.
-3. Zapisać licznik i ostrzeżenie w manifeście.
-4. Nie przełączać automatycznie na Playwright.
+1. Sprawdzić nazwę, adres i locality w źródłowym rekordzie Overture.
+2. Sprawdzić URL-encoding i kolejność elementów zapytania.
+3. Oznaczyć `entity_status=wrong_entity` albo `uncertain`; nie zgadywać.
+4. Nie dodawać automatycznego pobierania Maps jako obejścia.
 
 ### Problem: DuckDB nie może pobrać rozszerzenia
 
-1. Sprawdzić, czy Docker przygotował wymagane rozszerzenie podczas builda.
-2. Sprawdzić połączenie HTTPS i certyfikaty.
+1. Sprawdzić połączenie HTTPS, certyfikaty i katalog rozszerzeń DuckDB.
+2. Uruchomić `finder overture schema` w tym samym virtualenv.
 3. Nie wyłączać weryfikacji TLS.
-4. Zwrócić jawny błąd środowiska z instrukcją odbudowania obrazu.
+4. Zwrócić jawny błąd środowiska z instrukcją ponowienia instalacji w virtualenv.
 
 ## 23. Zasady pracy autonomicznego agenta
 
@@ -1362,7 +1245,7 @@ Agent wykonujący ten dokument ma przestrzegać poniższej pętli przy każdym z
 4. Uruchom testy dotyczące fragmentu.
 5. Uruchom pełną bramkę jakości.
 6. Przeczytaj diff i usuń przypadkowe zmiany.
-7. Sprawdź, czy logi i fixtures nie zawierają sekretów ani danych pobranych z produkcyjnego Google.
+7. Sprawdź, czy logi i fixtures nie zawierają sekretów ani danych skopiowanych z Google Maps.
 8. Dopiero wtedy oznacz krok jako ukończony.
 
 Jeśli test nie przechodzi:
@@ -1379,29 +1262,30 @@ Jeśli dokument i pomysł implementacyjny agenta są sprzeczne, wygrywa dokument
 
 MVP jest ukończone tylko wtedy, gdy wszystkie punkty są prawdziwe:
 
-- [ ] Instalacja w czystym Pythonie 3.12 działa.
-- [ ] Wszystkie testy, Ruff i mypy przechodzą.
-- [ ] Pokrycie wynosi co najmniej 85%.
-- [ ] Docker uruchamia tę samą komendę co środowisko lokalne.
-- [ ] Wyszukiwanie 3 km wokół punktu we Wrocławiu generuje CSV, manifest i linki.
-- [ ] CSV ma dokładnie ustalony schemat i poprawne polskie znaki w Excelu.
-- [ ] Overture release i źródła/licencje są zachowane.
-- [ ] Dokładny promień został przetestowany, nie jest samym bbox.
-- [ ] W top 20 nie ma powtórzonego `overture_id` ani dwóch rekordów połączonych
+- [x] Instalacja w czystym Pythonie 3.12 działa.
+- [x] Wszystkie testy, Ruff i mypy przechodzą.
+- [x] Pokrycie wynosi co najmniej 85%.
+- [x] Natywny Windows uruchamia fixture search w czystym virtualenv bez Docker/WSL.
+- [x] Wyszukiwanie 3 km wokół punktu we Wrocławiu generuje CSV, manifest i linki.
+- [x] CSV ma dokładnie ustalony schemat i poprawne polskie znaki w Excelu.
+- [x] Overture release i źródła/licencje są zachowane.
+- [x] Dokładny promień został przetestowany, nie jest samym bbox.
+- [x] W top 20 nie ma powtórzonego `overture_id` ani dwóch rekordów połączonych
       którąkolwiek regułą deduplikacji.
-- [ ] Udział `is_chain=true` w top 20 wynosi najwyżej 20%.
-- [ ] Buckety nie używają określenia `confirmed` bez ręcznej decyzji.
-- [ ] Brak klucza Google nie psuje trybu `--enrich none`.
-- [ ] Tryb Google przestrzega budżetu i nie zapisuje surowej odpowiedzi.
-- [ ] Playwright i rozszerzenie Chrome nie są zależnościami projektu.
-- [ ] README pozwala nowemu użytkownikowi wykonać pierwszy przebieg jedną komendą.
-- [ ] Ręczna kalibracja obejmuje co najmniej 20 ocenionych wierszy, ma
+- [x] Udział `is_chain=true` w top 20 wynosi najwyżej 20%.
+- [x] Buckety nie używają określenia `confirmed` bez ręcznej decyzji.
+- [x] Instalacja i pełny przebieg nie wymagają komercyjnego klucza API ani `.env`.
+- [x] Standardowy backend nie wysyła żądań do hostów Google.
+- [x] CSV i manifest nie zawierają pól ani agregatów Google.
+- [x] Playwright i rozszerzenie Chrome nie są zależnościami projektu.
+- [x] README pozwala nowemu użytkownikowi wykonać pierwszy przebieg jedną komendą.
+- [x] Ręczna kalibracja obejmuje co najmniej 20 ocenionych wierszy, ma
       `target_precision >= 0.80`, `no_site_precision >= 0.70` oraz ważny
       `calibration.approved.json` ze zgodnym hashem.
-- [ ] Pomiar 3 km bez Google trwa <= 300 s, nie licząc jednorazowej instalacji
+- [x] Pomiar 3 km w trybie Overture-only trwa <= 300 s, nie licząc jednorazowej instalacji
       rozszerzenia DuckDB; czas i warunki pomiaru są w manifeście/raporcie.
-- [ ] Każdy udany zestaw ma poprawny marker `.complete`; przerwany zapis nie ma go.
-- [ ] `data_fresh_until` istnieje, a README wyjaśnia 30-dniową świeżość i ręczne
+- [x] Każdy udany zestaw ma poprawny marker `.complete`; przerwany zapis nie ma go.
+- [x] `data_fresh_until` istnieje, a README wyjaśnia 30-dniową świeżość i ręczne
       usuwanie starych danych.
 
 ## 25. Dalszy rozwój po v1
@@ -1414,7 +1298,9 @@ Kolejność po potwierdzeniu wartości CSV:
 4. Sprawdzanie dostępności i jakości znalezionej domeny.
 5. SQLite dla historii uruchomień i ręcznych werdyktów.
 6. Prosty panel mapowy.
-7. Dopiero na końcu automatyzacja cykliczna.
+7. Opcjonalna ocena enrichmentu przez oficjalne API po osobnym zatwierdzeniu
+   kosztów, retencji i wartości biznesowej.
+8. Dopiero na końcu automatyzacja cykliczna.
 
 Nie rozpoczynać żadnego z tych punktów przed przejściem Definition of Done v1.
 
@@ -1429,11 +1315,7 @@ Przy implementacji zewnętrznych integracji agent może opierać się wyłączni
 - Overture STAC: <https://stac.overturemaps.org/catalog.json>;
 - Overture release calendar i retencja: <https://docs.overturemaps.org/release-calendar/>;
 - Overture DuckDB: <https://docs.overturemaps.org/getting-data/duckdb/>;
-- Overture licencje i atrybucje: <https://docs.overturemaps.org/attribution/>;
-- Google Text Search (New): <https://developers.google.com/maps/documentation/places/web-service/text-search>;
-- Google Places policies: <https://developers.google.com/maps/documentation/places/web-service/policies>;
-- Google Place IDs: <https://developers.google.com/maps/documentation/places/web-service/place-id>;
-- Google pricing: <https://developers.google.com/maps/billing-and-pricing/pricing>.
+- Overture licencje i atrybucje: <https://docs.overturemaps.org/attribution/>.
 
 Blogi, tutoriale, odpowiedzi Stack Overflow i kod przypadkowych repozytoriów nie mogą rozstrzygać kontraktów API. Jeżeli oficjalna dokumentacja różni się od niniejszego planu, agent ma:
 

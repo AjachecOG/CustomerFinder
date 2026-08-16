@@ -17,10 +17,10 @@ pytestmark = pytest.mark.network
     reason="Set RUN_NETWORK_TESTS=1 to enable live STAC checks",
 )
 def test_live_stac_resolves_latest_with_snapshot_fallback() -> None:
-    """Live STAC must resolve a release id; schema:version may fall back.
+    """Live Overture discovery must resolve a release id; schema may fall back.
 
-    As of 2026-08-11 STAC child catalogs return null schema:version. The
-    resolver then uses taxonomy_snapshot.schema_version and records a warning.
+    STAC may return null schema:version or be unavailable. The resolver then
+    uses the official S3 release listing and/or taxonomy snapshot with a warning.
     """
     cfg = load_builtin_config()
     resolved = resolve_release(
@@ -30,6 +30,9 @@ def test_live_stac_resolves_latest_with_snapshot_fallback() -> None:
     assert resolved.release_id
     assert resolved.schema_version == cfg.taxonomy_snapshot.schema_version
     if resolved.schema_source == "taxonomy_snapshot_fallback":
-        assert any("stac_schema_version_missing" in w for w in resolved.warnings)
+        assert any(
+            "stac_schema_version_missing" in warning or "stac_unavailable" in warning
+            for warning in resolved.warnings
+        )
     else:
         assert resolved.schema_source == "stac"

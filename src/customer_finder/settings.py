@@ -11,7 +11,6 @@ from typing import Any
 
 import yaml
 from pydantic import ValidationError
-from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from customer_finder.errors import ConfigError
 from customer_finder.models import (
@@ -30,18 +29,6 @@ CONFIG_FILENAMES: tuple[str, ...] = (
 )
 
 _HOST_RE = re.compile(r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$")
-
-
-class Settings(BaseSettings):
-    """Environment-backed settings (Google key is optional until enrich=google)."""
-
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore",
-    )
-
-    google_maps_api_key: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

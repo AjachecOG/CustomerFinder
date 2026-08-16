@@ -3,63 +3,42 @@
 CLI that searches Overture Maps Places for local cafes, bakeries, pastry shops,
 and ice cream shops that likely do not have an owned website.
 
+v0.1.0 is Overture-only. Installation and search do not require a commercial API
+key or a `.env` file. The app never calls Google Places API. Google Maps links
+are generated for manual review only; the backend does not fetch them.
+
 ## Implementation status
 
 | Milestone | Status | Notes |
 |-----------|--------|-------|
-| **0–4** | **Done** | Full offline + live Overture search CLI |
-| **5 — Calibration** | **Awaiting you** | Live Wrocław run done; fill `out/calibration.csv` |
-| **6 — Google enrichment** | **Code done (gated)** | Requires `out/calibration.approved.json` + `GOOGLE_MAPS_API_KEY` |
-| **7 — Docs** | **Mostly done** | CHANGELOG + ATTRIBUTION; tag v0.1.0 after calibration |
-
-## Your calibration steps (do this when ready)
-
-```powershell
-# If needed, regenerate leads + empty review sheet:
-finder search --lat 51.1079 --lon 17.0385 --radius-km 3 `
-  --categories cafe,bakery,pastry,ice_cream --enrich none `
-  --output out/leads_wroclaw.csv --overwrite
-finder calibration prepare --leads out/leads_wroclaw.csv `
-  --output out/calibration.csv --limit 30 --overwrite
-
-# Fill ALL five fields for every row in out/calibration.csv:
-#   entity_status: valid | wrong_entity | uncertain
-#   target_category: yes | no | uncertain
-#   operating_status_review: open | closed | uncertain
-#   independence: independent | chain | uncertain
-#   site_status: no_owned_site | owned_site | social_only | uncertain
-# Use google_maps_url in each row. Partial rows are rejected.
-
-finder calibration evaluate `
-  --file out/calibration.csv `
-  --output out/calibration.summary.json
-```
-
-Pass when top20 `target_precision >= 0.80`, `no_site_precision >= 0.70`, and all 30 rows are complete. That writes `out/calibration.approved.json`.
-
-Then Google enrich:
-
-```powershell
-# .env: GOOGLE_MAPS_API_KEY=...
-finder search --lat 51.1079 --lon 17.0385 --radius-km 3 `
-  --categories cafe,bakery,pastry,ice_cream `
-  --enrich google --google-max-requests 50 `
-  --output out/leads_wroclaw_google.csv
-```
+| **0–5** | **Done** | Search CLI + Wrocław calibration gate passed |
+| **6 — API-free hardening** | **Done** | No Google Places API path in the supported runtime |
+| **7 — Docs & release v0.1.0** | **Done** | Native Windows install and all release gates passed |
 
 ## Quick start
+
+Install once:
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -e ".[dev]"
-finder version
-finder config validate
+pip install .
+```
+
+Then perform the first real search with one command:
+
+```powershell
 finder search `
   --lat 51.1079 --lon 17.0385 --radius-km 3 `
   --categories cafe,bakery,pastry,ice_cream `
-  --enrich none `
   --output out/leads_wroclaw.csv
+```
+
+Optional installation checks:
+
+```powershell
+finder version
+finder config validate
 ```
 
 Offline fixture (no network):
@@ -72,24 +51,49 @@ finder search --lat 51.1079 --lon 17.0385 --radius-km 3 `
   --output out/leads_fixture.csv
 ```
 
-Requires Python 3.12.
+Requires Python 3.12. Docker, WSL and Node.js are not required. The project and
+its virtual environment may live entirely on a non-system drive such as `D:`.
 
-## Docker
+For development only, install the editable package with quality tools:
 
 ```powershell
-docker build -t customer-finder .
-docker run --rm -v "${PWD}/out:/app/out" customer-finder search `
-  --lat 51.1079 --lon 17.0385 --radius-km 3 `
-  --categories cafe,bakery,pastry,ice_cream `
-  --output /app/out/leads.csv
+pip install -e ".[dev]"
 ```
 
-## Google cost warning
+## Using the lead list
 
-`--enrich google` calls Places Text Search (New). Field mask includes `websiteUri`,
-which can affect SKU/cost. Set a low `--google-max-requests` budget. See
-[Google Maps pricing](https://developers.google.com/maps/billing-and-pricing/pricing).
-Google never changes permanent buckets/scores; only `google_place_id` may be stored.
+The CSV is sorted by score, highest first. Start with `likely_no_site`, then
+review `social_only` and `aggregator_only`. Use the phone, email and social
+columns to plan outreach, but open the corresponding URL from
+`<stem>.verify_links.txt` before contacting a business: the bucket is a lead
+signal, not proof that the business has no website.
+
+The manifest records filters, counts, duration, Overture release and freshness.
+The `.complete` marker contains hashes proving that the CSV, manifest and link
+file belong to one fully written run.
+
+## Manual verification
+
+Each successful search writes `<stem>.verify_links.txt` with ordinary Google Maps
+search URLs (name + address + locality). Open them yourself in a browser. The
+program does not scrape Maps.
+
+Local review desk for calibration:
+
+```powershell
+finder calibration gui
+```
+
+Then:
+
+```powershell
+finder calibration evaluate `
+  --file out/calibration.csv `
+  --output out/calibration.summary.json
+```
+
+Pass when top20 `target_precision >= 0.80`, `no_site_precision >= 0.70`, and all
+prepared rows are complete. That writes `out/calibration.approved.json`.
 
 ## Buckets
 

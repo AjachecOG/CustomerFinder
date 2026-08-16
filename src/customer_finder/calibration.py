@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import hmac
 import json
+import os
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +42,81 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def approval_path_for_summary(summary_path: Path) -> Path:
+    """Return the deterministic approval path associated with a summary."""
+    if summary_path.name == "calibration.summary.json":
+        return summary_path.with_name("calibration.approved.json")
+    if summary_path.name.endswith(".summary.json"):
+        return summary_path.with_name(summary_path.name.replace(".summary.json", ".approved.json"))
+    return summary_path.with_name(summary_path.stem + ".approved.json")
+
+
+def _resolve_approval_reference(approval_path: Path, raw_path: str) -> Path:
+    reference = Path(raw_path)
+    if reference.is_absolute():
+        return reference
+    candidates = (Path.cwd() / reference, approval_path.parent / reference.name)
+    return next((candidate for candidate in candidates if candidate.is_file()), candidates[0])
+
+
+def inspect_calibration_approval(approval_path: Path) -> dict[str, Any]:
+    """Validate an approval file and every hash it attests to without raising."""
+    result: dict[str, Any] = {
+        "path": str(approval_path),
+        "exists": approval_path.is_file(),
+        "valid": False,
+        "calibration_csv": None,
+        "summary_json": None,
+        "error": None,
+    }
+    if not approval_path.is_file():
+        return result
+    try:
+        payload = json.loads(approval_path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("approval JSON must be an object")
+        if payload.get("passed") is not True:
+            raise ValueError("approval passed flag is not true")
+        required = (
+            "calibration_csv",
+            "summary_json",
+            "calibration_sha256",
+            "summary_sha256",
+        )
+        if not all(isinstance(payload.get(key), str) and payload[key] for key in required):
+            raise ValueError("approval is missing required string fields")
+
+        calibration_csv = _resolve_approval_reference(
+            approval_path, str(payload["calibration_csv"])
+        )
+        summary_json = _resolve_approval_reference(approval_path, str(payload["summary_json"]))
+        result["calibration_csv"] = str(calibration_csv)
+        result["summary_json"] = str(summary_json)
+        if not calibration_csv.is_file():
+            raise ValueError(f"approved calibration CSV not found: {calibration_csv}")
+        if not summary_json.is_file():
+            raise ValueError(f"approved summary JSON not found: {summary_json}")
+
+        calibration_sha = _sha256(calibration_csv)
+        summary_sha = _sha256(summary_json)
+        if not hmac.compare_digest(calibration_sha, str(payload["calibration_sha256"])):
+            raise ValueError("approved calibration CSV hash mismatch")
+        if not hmac.compare_digest(summary_sha, str(payload["summary_sha256"])):
+            raise ValueError("approved summary JSON hash mismatch")
+
+        summary = json.loads(summary_json.read_text(encoding="utf-8"))
+        if not isinstance(summary, dict) or summary.get("passed") is not True:
+            raise ValueError("approved summary does not contain passed=true")
+        if not hmac.compare_digest(str(summary.get("sha256") or ""), calibration_sha):
+            raise ValueError("approved summary does not attest to the calibration CSV hash")
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        result["error"] = str(exc)
+        return result
+
+    result["valid"] = True
+    return result
+
+
 def _candidate_from_leads_row(row: dict[str, str]) -> Candidate:
     """Minimal Candidate used only to build Maps URLs from leads CSV."""
     place = RawOverturePlace(
@@ -58,7 +136,6 @@ def _candidate_from_leads_row(row: dict[str, str]) -> Candidate:
         bucket=CandidateBucket(row.get("bucket") or "unknown"),
         score=int(float(row.get("score") or 0)),
         score_reasons=[],
-        google_place_id=row.get("google_place_id") or None,
     )
 
 
@@ -77,30 +154,99 @@ def prepare_calibration(
     with leads_csv.open(encoding="utf-8-sig", newline="") as handle:
         rows = list(csv.DictReader(handle))
     selected = rows[:limit]
-    output_csv.parent.mkdir(parents=True, exist_ok=True)
-    with output_csv.open("w", encoding="utf-8-sig", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(CALIBRATION_COLUMNS))
-        writer.writeheader()
-        for rank, row in enumerate(selected, start=1):
-            candidate = _candidate_from_leads_row(row)
-            writer.writerow(
-                {
-                    "rank": str(rank),
-                    "overture_id": protect_formula(row["overture_id"]),
-                    "name": protect_formula(row.get("name") or ""),
-                    "google_maps_url": maps_search_url(candidate),
-                    "entity_status": "",
-                    "target_category": "",
-                    "operating_status_review": "",
-                    "independence": "",
-                    "site_status": "",
-                    "notes": "",
-                }
-            )
+    prepared: list[dict[str, str]] = []
+    for rank, row in enumerate(selected, start=1):
+        candidate = _candidate_from_leads_row(row)
+        prepared.append(
+            {
+                "rank": str(rank),
+                "overture_id": row["overture_id"],
+                "name": row.get("name") or "",
+                "google_maps_url": maps_search_url(candidate),
+                "entity_status": "",
+                "target_category": "",
+                "operating_status_review": "",
+                "independence": "",
+                "site_status": "",
+                "notes": "",
+            }
+        )
+    save_calibration_rows(output_csv, prepared)
     return output_csv
 
 
-def _is_complete(row: dict[str, str]) -> bool:
+def load_calibration_rows(path: Path) -> list[dict[str, str]]:
+    """Load calibration CSV rows; missing file returns an empty list."""
+    if not path.is_file():
+        return []
+    with path.open(encoding="utf-8-sig", newline="") as handle:
+        return [
+            {key: (value or "") for key, value in row.items()} for row in csv.DictReader(handle)
+        ]
+
+
+def save_calibration_rows(path: Path, rows: list[dict[str, str]]) -> None:
+    """Rewrite calibration CSV with idempotent spreadsheet-formula protection."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.parent / f".{path.name}.tmp-{uuid.uuid4().hex}"
+    try:
+        with temporary.open("w", encoding="utf-8-sig", newline="") as handle:
+            writer = csv.DictWriter(
+                handle,
+                fieldnames=list(CALIBRATION_COLUMNS),
+                extrasaction="ignore",
+            )
+            writer.writeheader()
+            for row in rows:
+                writer.writerow(
+                    {column: protect_formula(row.get(column, "")) for column in CALIBRATION_COLUMNS}
+                )
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    except OSError as exc:
+        raise OutputError(f"Failed to write calibration CSV atomically: {path}: {exc}") from exc
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def update_calibration_review(
+    path: Path,
+    rank: int,
+    *,
+    entity_status: str,
+    target_category: str,
+    operating_status_review: str,
+    independence: str,
+    site_status: str,
+    notes: str | None = None,
+) -> dict[str, str]:
+    """Validate and persist one complete five-field review."""
+    rows = load_calibration_rows(path)
+    if not rows:
+        raise ArgumentError(f"Calibration CSV not found: {path}")
+    match = next((row for row in rows if int(row["rank"]) == rank), None)
+    if match is None:
+        raise ArgumentError(f"Calibration rank {rank} not found in {path}")
+    review = CalibrationReview(
+        entity_status=entity_status,  # type: ignore[arg-type]
+        target_category=target_category,  # type: ignore[arg-type]
+        operating_status_review=operating_status_review,  # type: ignore[arg-type]
+        independence=independence,  # type: ignore[arg-type]
+        site_status=site_status,  # type: ignore[arg-type]
+        notes=notes or None,
+    )
+    match["entity_status"] = review.entity_status or ""
+    match["target_category"] = review.target_category or ""
+    match["operating_status_review"] = review.operating_status_review or ""
+    match["independence"] = review.independence or ""
+    match["site_status"] = review.site_status or ""
+    match["notes"] = review.notes or ""
+    save_calibration_rows(path, rows)
+    return match
+
+
+def is_complete_review_row(row: dict[str, str]) -> bool:
     values = [row.get(field, "").strip() for field in REVIEW_FIELDS]
     if all(not value for value in values):
         return False
@@ -142,7 +288,7 @@ def evaluate_calibration(
     if len(ids) != len(set(ids)):
         raise ConfigError("Duplicate overture_id in calibration CSV")
 
-    complete_rows = [row for row in rows if _is_complete(row)]
+    complete_rows = [row for row in rows if is_complete_review_row(row)]
     reviewed = len(complete_rows)
     if reviewed < 20:
         raise ConfigError(f"Need at least 20 completely reviewed rows, got {reviewed}")
@@ -214,14 +360,7 @@ def evaluate_calibration(
     )
 
     if passed:
-        approved = summary_path.with_name(
-            summary_path.name.replace(".summary.json", ".approved.json")
-            if summary_path.name.endswith(".summary.json")
-            else summary_path.stem + ".approved.json"
-        )
-        # Default name calibration.approved.json when summary is calibration.summary.json
-        if summary_path.name == "calibration.summary.json":
-            approved = summary_path.with_name("calibration.approved.json")
+        approved = approval_path_for_summary(summary_path)
         approved.write_text(
             json.dumps(
                 {
@@ -239,122 +378,4 @@ def evaluate_calibration(
         )
         summary["approved_path"] = str(approved)
 
-    return summary
-
-
-GOOGLE_CALIBRATION_COLUMNS = (
-    "rank",
-    "overture_id",
-    "name",
-    "google_maps_url",
-    "google_place_id",
-    "same_entity",
-    "notes",
-)
-
-
-def prepare_google_calibration(
-    leads_csv: Path,
-    output_csv: Path,
-    *,
-    limit: int = 10,
-    overwrite: bool = False,
-) -> Path:
-    if output_csv.exists() and not overwrite:
-        raise OutputError(f"Google calibration file already exists: {output_csv}")
-    if not leads_csv.is_file():
-        raise ArgumentError(f"Leads CSV not found: {leads_csv}")
-
-    with leads_csv.open(encoding="utf-8-sig", newline="") as handle:
-        rows = [row for row in csv.DictReader(handle) if (row.get("google_place_id") or "").strip()]
-    selected = rows[:limit]
-    if len(selected) < limit:
-        raise ConfigError(f"Need at least {limit} rows with google_place_id, found {len(selected)}")
-
-    output_csv.parent.mkdir(parents=True, exist_ok=True)
-    with output_csv.open("w", encoding="utf-8-sig", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(GOOGLE_CALIBRATION_COLUMNS))
-        writer.writeheader()
-        for rank, row in enumerate(selected, start=1):
-            candidate = _candidate_from_leads_row(row)
-            writer.writerow(
-                {
-                    "rank": str(rank),
-                    "overture_id": protect_formula(row["overture_id"]),
-                    "name": protect_formula(row.get("name") or ""),
-                    "google_maps_url": maps_search_url(candidate),
-                    "google_place_id": protect_formula(row.get("google_place_id") or ""),
-                    "same_entity": "",
-                    "notes": "",
-                }
-            )
-    return output_csv
-
-
-def evaluate_google_calibration(
-    calibration_csv: Path,
-    summary_path: Path,
-    *,
-    expected_rows: int = 10,
-) -> dict[str, Any]:
-    if not calibration_csv.is_file():
-        raise ArgumentError(f"Google calibration CSV not found: {calibration_csv}")
-    with calibration_csv.open(encoding="utf-8-sig", newline="") as handle:
-        rows = list(csv.DictReader(handle))
-    if len(rows) != expected_rows:
-        raise ConfigError(f"Expected {expected_rows} rows, got {len(rows)}")
-    ids = [row["overture_id"] for row in rows]
-    if len(ids) != len(set(ids)):
-        raise ConfigError("Duplicate overture_id in google calibration CSV")
-
-    values = []
-    for row in rows:
-        value = (row.get("same_entity") or "").strip().lower()
-        if value not in {"yes", "no", "uncertain"}:
-            raise ConfigError(f"same_entity must be yes|no|uncertain (rank={row.get('rank')})")
-        values.append(value)
-
-    if any(v == "uncertain" for v in values):
-        # uncertain does not satisfy the gate
-        precision = 0.0
-        passed = False
-    else:
-        yes = sum(1 for v in values if v == "yes")
-        precision = yes / len(values)
-        passed = precision == 1.0
-
-    summary: dict[str, Any] = {
-        "file": str(calibration_csv),
-        "sha256": _sha256(calibration_csv),
-        "reviewed": len(values),
-        "entity_match_precision": precision,
-        "passed": passed,
-        "thresholds": {"entity_match_precision": 1.0, "required_rows": expected_rows},
-    }
-    summary_path.parent.mkdir(parents=True, exist_ok=True)
-    summary_path.write_text(
-        json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
-    if passed:
-        approved = summary_path.with_name("google-match-review.approved.json")
-        if summary_path.name.endswith(".summary.json"):
-            approved = summary_path.with_name(
-                summary_path.name.replace(".summary.json", ".approved.json")
-            )
-        approved.write_text(
-            json.dumps(
-                {
-                    "calibration_csv": str(calibration_csv),
-                    "summary_json": str(summary_path),
-                    "calibration_sha256": summary["sha256"],
-                    "summary_sha256": _sha256(summary_path),
-                    "passed": True,
-                },
-                ensure_ascii=False,
-                indent=2,
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        summary["approved_path"] = str(approved)
     return summary
